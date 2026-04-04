@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+    body {
+      width: 240px;
+      margin: 0;
+      padding: 24px;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: #09090b;
+      color: #e4e4e7;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-container {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6, #a855f7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      margin-bottom: 4px;
+      box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #fff, #a1a1aa);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.02em;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.2);
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #4ade80;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      background: #22c55e;
+      border-radius: 50%;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+    }
+
+    .info-text {
+      margin: 0;
+      font-size: 12px;
+      color: #71717a;
+      line-height: 1.6;
+    }
+
+    .footer {
+      margin-top: 12px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      width: 100%;
+      font-size: 10px;
+      color: #3f3f46;
+      letter-spacing: 0.05em;
+      font-weight: 500;
+    }
+
+    .toggle-section {
+      width: 100%;
+      margin: 10px 0;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-sizing: border-box;
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: #a1a1aa;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+    }
+
+    .switch input { opacity: 0; width: 0; height: 0; }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: rgba(255, 255, 255, 0.1);
+      transition: .4s;
+      border-radius: 34px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #a1a1aa;
+      transition: .4s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider { background-color: #6366f1; }
+    input:checked + .slider:before { transform: translateX(20px); background-color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">⚡</div>
+    <h1>TokenPilot</h1>
+    <div class="status-pill" id="status-display">
+      <div class="status-dot"></div>
+      Active
+    </div>
+    
+    <div class="toggle-section">
+      <span class="toggle-label">Extension Power</span>
+      <label class="switch">
+        <input type="checkbox" id="power-toggle" checked>
+        <span class="slider"></span>
+      </label>
+    </div>
+
+    <p class="info-text">Open any AI chat platform or website to track tokens and view history.</p>
+    <div class="footer">TOKENPILOT V3.0</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
