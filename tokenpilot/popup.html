@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>TokenPilot</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@500;600&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0e0e14;
+  --surface: rgba(255,255,255,0.035);
+  --surface-2: rgba(255,255,255,0.06);
+  --stroke: rgba(255,255,255,0.08);
+  --stroke-2: rgba(255,255,255,0.05);
+  --text: #ededf0;
+  --text-dim: #a1a1aa;
+  --text-dim2: #71717a;
+  --text-faint: #52525b;
+  --accent: #a78bfa;
+  --accent-bg: rgba(167,139,250,0.14);
+  --accent-border: rgba(167,139,250,0.28);
+  --ok: #34d399;
+}
+
+body {
+  width: 300px;
+  padding: 18px 16px 16px;
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  background:
+    radial-gradient(200px 160px at 85% 0%, rgba(167,139,250,0.18), transparent 70%),
+    var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.container { display: flex; flex-direction: column; gap: 14px; }
+
+/* Header */
+.header { display: flex; align-items: center; gap: 10px; }
+.logo {
+  width: 32px; height: 32px; border-radius: 9px;
+  background: linear-gradient(135deg, #8b5cf6, #c084fc 70%, #f0abfc);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(139,92,246,0.45), inset 0 1px 0 rgba(255,255,255,0.35);
+}
+.brand-text { line-height: 1.1; }
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.brand-ver {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-dim2);
+  margin-top: 2px;
+}
+
+/* Status */
+.status {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  background: rgba(52,211,153,0.1);
+  border: 1px solid rgba(52,211,153,0.25);
+  border-radius: 99px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ok);
+  letter-spacing: 0.04em;
+  align-self: flex-start;
+}
+.status.off { background: var(--surface); border-color: var(--stroke); color: var(--text-faint); }
+.status-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  animation: pulse 2s ease-in-out infinite;
+}
+.status.off .status-dot { animation: none; box-shadow: none; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Toggle row */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--stroke-2);
+  border-radius: 12px;
+}
+.toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; inset: 0;
+  background: rgba(255,255,255,0.1);
+  border-radius: 99px;
+  cursor: pointer;
+  transition: 0.3s;
+}
+.slider::before {
+  content: "";
+  position: absolute;
+  width: 14px; height: 14px;
+  left: 3px; bottom: 3px;
+  background: #888;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+input:checked + .slider { background: linear-gradient(135deg, #8b5cf6, #c084fc); }
+input:checked + .slider::before { transform: translateX(16px); background: #fff; }
+
+/* Stats grid */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--stroke-2);
+  border-radius: 11px;
+  padding: 11px 12px;
+}
+.stat-label {
+  font-size: 9.5px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+}
+.stat-value {
+  margin-top: 4px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Transfer Chat Button ── */
+.transfer-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 11px;
+  color: var(--accent);
+  font-family: 'Geist', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+.transfer-btn:hover {
+  background: rgba(167,139,250,0.22);
+  border-color: rgba(167,139,250,0.45);
+}
+.transfer-btn:active { opacity: 0.75; }
+.transfer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.transfer-btn svg { flex-shrink: 0; }
+
+/* Transfer status feedback */
+.transfer-status {
+  font-size: 10.5px;
+  color: var(--text-dim2);
+  text-align: center;
+  min-height: 14px;
+  transition: color 0.2s;
+}
+.transfer-status.ok  { color: var(--ok); }
+.transfer-status.err { color: #f87171; }
+
+.info {
+  font-size: 11px;
+  color: var(--text-dim2);
+  line-height: 1.55;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.footer {
+  padding-top: 10px;
+  margin-top: 2px;
+  border-top: 1px solid var(--stroke-2);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path d="M13 2 3 14h7v8l10-12h-7V2z" fill="currentColor"/></svg>
+    </div>
+    <div class="brand-text">
+      <div class="brand-name">TokenPilot</div>
+      <div class="brand-ver">v3.4</div>
+    </div>
+  </div>
+
+  <div class="status" id="status-pill">
+    <span class="status-dot"></span>
+    <span id="status-text">ACTIVE</span>
+  </div>
+
+  <div class="toggle-row">
+    <span class="toggle-label">Analysis Engine</span>
+    <label class="switch">
+      <input type="checkbox" id="power-toggle" checked/>
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Tokens Tracked</div>
+      <div class="stat-value" id="total-tokens">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Prompts Sent</div>
+      <div class="stat-value" id="prompt-count">0</div>
+    </div>
+  </div>
+
+  <!-- ── Transfer Chat ── -->
+  <button class="transfer-btn" id="transfer-btn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+    </svg>
+    Transfer Chat to Another AI
+  </button>
+  <div class="transfer-status" id="transfer-status"></div>
+
+  <p class="info">Live token counter, prompt insights &amp; history across ChatGPT, Claude, Gemini and more.</p>
+
+  <div class="footer">TOKENPILOT · V3.4</div>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
