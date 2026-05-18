@@ -66,7 +66,16 @@ function detectModel() {
       }
     }
     if (host.includes("chatgpt") || host.includes("chat.openai")) {
-      const selectors = ['button[aria-label*="Model"]','[data-testid="model-switcher"]','span[class*="model"]','button[class*="model"]'];
+      const selectors = [
+        'button[aria-label*="Model"]',
+        '[data-testid="model-switcher"]',
+        'button[aria-haspopup="listbox"]',
+        '[class*="ModelSwitcher"]',
+        '[class*="modelSelector"]',
+        '[class*="model-switcher"]',
+        'span[class*="model"]',
+        'button[class*="model"]',
+      ];
       for (const sel of selectors) {
         const el = document.querySelector(sel);
         if (el?.textContent.trim()) { modelText = el.textContent.trim().toLowerCase(); break; }
@@ -583,118 +592,229 @@ document.addEventListener("mousedown", e => {
 
 // ── Conversation Scraper ─────────────────────────────────────
 // Reads the current AI chat page DOM and returns an ordered array
-// of { role: "You" | "AI", text: string } objects.
-function scrapeConversation() {
-  const host = window.location.hostname;
-  const messages = [];
+// of { role: "You" | "AI", text: string, images: string[] } objects.
+
+// ── Collect image descriptions from a message element ────────
+// Returns array of human-readable descriptions instead of base64 URLs.
+function collectImagesFromEl(el) {
+  const imgs   = el.querySelectorAll("img");
+  const result = [];
+  for (const img of imgs) {
+    if ((img.naturalWidth || img.width || 99) < 40) continue;
+    if (img.closest("[class*='avatar'], [class*='Avatar'], [class*='logo']")) continue;
+    const alt = img.alt?.trim() || "";
+    let desc  = alt;
+    if (!desc) {
+      try {
+        const src      = img.currentSrc || img.src || "";
+        const filename = new URL(src, window.location.href).pathname
+          .split("/").pop().replace(/[?#].*$/, "");
+        if (filename) desc = filename;
+      } catch {}
+    }
+    result.push(desc || "image");
+  }
+  return result; // array of description strings (no base64)
+}
+
+// ── Main conversation scraper (async for image support) ──────
+async function scrapeConversationAsync() {
+  const host     = window.location.hostname;
+  const rawItems = []; // { role, text, el }
 
   try {
-    // ── ChatGPT (chat.openai.com / chatgpt.com) ──
+    // ── ChatGPT ──
     if (host.includes("chatgpt") || host.includes("chat.openai")) {
       document.querySelectorAll("[data-message-author-role]").forEach(el => {
         const role = el.getAttribute("data-message-author-role");
-        const text = el.innerText?.trim();
-        if (text) messages.push({ role: role === "user" ? "You" : "AI", text });
+        if (!role) return;
+        // textEl = clean text (no action buttons); el = full container (captures uploaded/generated images)
+        const textEl =
+          (role === "user"
+            ? el.querySelector(".whitespace-pre-wrap, [class*='user-message-text']")
+            : el.querySelector(".markdown.prose, .markdown, [class*='prose']")
+          ) || el;
+        rawItems.push({ role: role === "user" ? "You" : "AI", el, textEl });
       });
 
-    // ── Claude (claude.ai) ──
+    // ── Claude ──
     } else if (host.includes("claude.ai")) {
-      // Try data-testid first (most stable)
-      const humanEls = document.querySelectorAll('[data-testid="human-message"]');
-      const aiEls    = document.querySelectorAll('[data-testid="ai-message"]');
 
-      if (humanEls.length > 0 || aiEls.length > 0) {
-        // Collect all with their DOM position so we can sort them in order
-        const allNodes = [];
-        humanEls.forEach(el => allNodes.push({ role: "You", text: el.innerText?.trim(), el }));
-        aiEls.forEach(el    => allNodes.push({ role: "AI",  text: el.innerText?.trim(), el }));
-        allNodes.sort((a, b) => {
-          const pos = a.el.compareDocumentPosition(b.el);
-          return pos & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
-        });
-        allNodes.forEach(n => { if (n.text) messages.push({ role: n.role, text: n.text }); });
-      } else {
-        // Fallback: class-based selectors
-        const all = [];
-        document.querySelectorAll(".human-turn, [class*='HumanTurn']").forEach(el =>
-          all.push({ role: "You", text: el.innerText?.trim(), el }));
-        document.querySelectorAll(".assistant-turn, [class*='AssistantTurn']").forEach(el =>
-          all.push({ role: "AI",  text: el.innerText?.trim(), el }));
-        all.sort((a, b) => a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-        all.forEach(n => { if (n.text) messages.push({ role: n.role, text: n.text }); });
+      // Try every known selector variant — Claude updates their DOM frequently
+      const humanSelectors = [
+        '[data-testid="human-message"]',
+        '[data-testid="user-message"]',
+        '.human-turn',
+        "[class*='HumanTurn']",
+        "[class*='human-message']",
+        "[class*='UserMessage']",
+      ];
+      const aiSelectors = [
+        '[data-testid="assistant-message"]',
+        '[data-testid="ai-message"]',
+        '[data-testid="claude-message"]',
+        '.assistant-turn',
+        "[class*='AssistantTurn']",
+        "[class*='AssistantMessage']",
+        "[class*='assistant-message']",
+        "[class*='claude-message']",
+        "[class*='ai-response']",
+        "[class*='bot-message']",
+        "[data-is-streaming]",
+        ".font-claude-message",
+      ];
+
+      let humanEls = [];
+      let aiEls    = [];
+
+      for (const sel of humanSelectors) {
+        const found = document.querySelectorAll(sel);
+        if (found.length) { humanEls = Array.from(found); break; }
+      }
+      for (const sel of aiSelectors) {
+        const found = document.querySelectorAll(sel);
+        if (found.length) { aiEls = Array.from(found); break; }
       }
 
-    // ── Gemini (gemini.google.com) ──
-    } else if (host.includes("gemini.google.com")) {
-      const all = [];
-      document.querySelectorAll("user-query, .user-query-text-content").forEach(el =>
-        all.push({ role: "You", text: el.innerText?.trim(), el }));
-      document.querySelectorAll("model-response, .model-response-text").forEach(el =>
-        all.push({ role: "AI",  text: el.innerText?.trim(), el }));
-      all.sort((a, b) => a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-      all.forEach(n => { if (n.text) messages.push({ role: n.role, text: n.text }); });
+      if (humanEls.length && !aiEls.length) {
+        // Selectors found humans but no AI — try nextElementSibling heuristic
+        humanEls.forEach(humanEl => {
+          rawItems.push({ role: "You", el: humanEl });
+          const sib = humanEl.nextElementSibling;
+          if (sib && sib.innerText?.trim().length > 10) {
+            rawItems.push({ role: "AI", el: sib });
+          }
+        });
+      } else if (humanEls.length || aiEls.length) {
+        humanEls.forEach(el => rawItems.push({ role: "You", el }));
+        aiEls.forEach(el    => rawItems.push({ role: "AI",  el }));
+        rawItems.sort((a, b) =>
+          a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+      } else {
+        // Last resort — direct children of conversation container, alternate roles
+        const container =
+          document.querySelector('[class*="conversation"]') ||
+          document.querySelector('[class*="Conversation"]') ||
+          document.querySelector('main') ||
+          document.body;
+        const children = Array.from(container.children)
+          .filter(el => el.innerText && el.innerText.trim().length > 10);
+        let roleToggle = "You";
+        children.forEach(el => {
+          rawItems.push({ role: roleToggle, el });
+          roleToggle = roleToggle === "You" ? "AI" : "You";
+        });
+      }
 
-    // ── AI Studio (aistudio.google.com) ──
+    // ── Gemini ──
+    } else if (host.includes("gemini.google.com")) {
+      // Use specific content children to avoid "You said"/"Gemini said"/"Show thinking" labels
+      document.querySelectorAll("user-query").forEach(el => {
+        const textEl = el.querySelector(".user-query-text-content, .query-text, p") || el;
+        rawItems.push({ role: "You", el, textEl });
+      });
+      document.querySelectorAll("model-response").forEach(el => {
+        const textEl = el.querySelector(".model-response-text, .response-content, message-content, .markdown") || el;
+        rawItems.push({ role: "AI", el, textEl });
+      });
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+
+    // ── AI Studio ──
     } else if (host.includes("aistudio.google.com")) {
       document.querySelectorAll("ms-chunk").forEach(el => {
-        const isUser = el.querySelector("[class*='user']") !== null ||
-                       el.getAttribute("role") === "user";
-        messages.push({ role: isUser ? "You" : "AI", text: el.innerText?.trim() });
+        const isUser = !!el.querySelector("[class*='user']") || el.getAttribute("role") === "user";
+        rawItems.push({ role: isUser ? "You" : "AI", el });
       });
 
     // ── Perplexity ──
     } else if (host.includes("perplexity.ai")) {
-      const all = [];
       document.querySelectorAll('[data-testid="user-message"], .break-words').forEach(el => {
-        // Perplexity puts user msgs in a distinct wrapper
         const isUser = !!el.closest('[data-testid="user-message"]') ||
                        el.classList.contains("whitespace-pre-line");
-        all.push({ role: isUser ? "You" : "AI", text: el.innerText?.trim(), el });
+        rawItems.push({ role: isUser ? "You" : "AI", el });
       });
-      all.sort((a, b) => a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-      all.forEach(n => { if (n.text && n.text.length > 2) messages.push({ role: n.role, text: n.text }); });
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
 
-    // ── Mistral / Le Chat ──
+    // ── Mistral ──
     } else if (host.includes("mistral.ai") || host.includes("chat.mistral.ai")) {
-      const all = [];
       document.querySelectorAll("[class*='UserMessage'], [class*='user-message']").forEach(el =>
-        all.push({ role: "You", text: el.innerText?.trim(), el }));
+        rawItems.push({ role: "You", el }));
       document.querySelectorAll("[class*='AssistantMessage'], [class*='assistant-message'], [class*='BotMessage']").forEach(el =>
-        all.push({ role: "AI",  text: el.innerText?.trim(), el }));
-      all.sort((a, b) => a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-      all.forEach(n => { if (n.text) messages.push({ role: n.role, text: n.text }); });
+        rawItems.push({ role: "AI", el }));
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
 
     // ── DeepSeek ──
     } else if (host.includes("deepseek.com")) {
-      const all = [];
       document.querySelectorAll("[class*='userMessage'], [class*='user_message'], [class*='UserMessage']").forEach(el =>
-        all.push({ role: "You", text: el.innerText?.trim(), el }));
+        rawItems.push({ role: "You", el }));
       document.querySelectorAll(".ds-markdown, [class*='assistantMessage'], [class*='AssistantMessage']").forEach(el =>
-        all.push({ role: "AI",  text: el.innerText?.trim(), el }));
-      all.sort((a, b) => a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-      all.forEach(n => { if (n.text) messages.push({ role: n.role, text: n.text }); });
+        rawItems.push({ role: "AI", el }));
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+
+    // ── GitHub Copilot ──
+    } else if (host.includes("github.com")) {
+      document.querySelectorAll(
+        '[class*="UserMessage"], [class*="user-message"], [data-testid="user-message"], [data-role="user"]'
+      ).forEach(el => rawItems.push({ role: "You", el }));
+      document.querySelectorAll(
+        '[class*="AssistantMessage"], [class*="CopilotMessage"], [class*="assistant-message"], [data-testid="assistant-message"], [data-role="assistant"], [class*="copilot-markdown"]'
+      ).forEach(el => rawItems.push({ role: "AI", el }));
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+
+    // ── Arena.ai ──
+    } else if (host.includes("arena.ai")) {
+      document.querySelectorAll(
+        '[class*="human"], [class*="user-message"], [class*="UserMessage"], [data-role="user"]'
+      ).forEach(el => rawItems.push({ role: "You", el }));
+      document.querySelectorAll(
+        '[class*="assistant"], [class*="model-response"], [class*="AssistantMessage"], [data-role="assistant"]'
+      ).forEach(el => rawItems.push({ role: "AI", el }));
+      rawItems.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
     }
 
-  } catch (e) {
+  } catch(e) {
     console.warn("[TokenPilot] scrapeConversation error:", e);
   }
 
-  // Filter out blanks and de-duplicate adjacent identical messages
-  return messages
-    .filter(m => m.text && m.text.length > 0)
-    .filter((m, i, arr) => i === 0 || m.text !== arr[i - 1].text);
+  // ── Build messages with text + images ────────────────────────
+  const messages = [];
+  for (const item of rawItems) {
+    // textEl = clean text node; el = full container (catches uploaded/generated images)
+    let text = (item.textEl || item.el).innerText?.trim() || "";
+    // Strip residual Gemini UI chrome
+    if (host.includes("gemini.google.com")) {
+      text = text.replace(/^(You said|Gemini said|Show thinking)[:\s]*/gi, "").trim();
+    }
+    const images = collectImagesFromEl(item.el);
+    if (!text && images.length === 0) continue;
+    messages.push({ role: item.role, text, images });
+  }
+
+  // De-duplicate adjacent identical text
+  return messages.filter((m, i, arr) =>
+    i === 0 || m.text !== arr[i - 1].text || m.images.length > 0);
 }
 
-// ── Message listener: respond to popup's SCRAPE_CONVERSATION request ──
+// ── Message listener: SCRAPE_CONVERSATION (async) ────────────
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.type === "SCRAPE_CONVERSATION") {
-    const messages = scrapeConversation();
-    sendResponse({
-      messages,
-      platform: window.location.hostname,
-      model:    detectedModel || "Unknown",
+    scrapeConversationAsync().then(messages => {
+      sendResponse({
+        messages,
+        platform: window.location.hostname,
+        model:    detectedModel || "Unknown",
+      });
+    }).catch(e => {
+      console.warn("[TokenPilot] scrape failed:", e);
+      sendResponse({ messages: [], platform: window.location.hostname, model: "Unknown" });
     });
-    return true; // keep channel open
+    return true; // keep channel open for async
   }
 });
 

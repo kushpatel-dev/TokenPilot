@@ -3,7 +3,7 @@
   "name": "TokenPilot",
   "version": "3.4",
   "description": "Real-time token counter, prompt analysis & history for ChatGPT, Claude, Gemini and more.",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
