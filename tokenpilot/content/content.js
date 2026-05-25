@@ -617,9 +617,171 @@ function collectImagesFromEl(el) {
   return result; // array of description strings (no base64)
 }
 
+// ── Scroll conversation to load all virtual-rendered messages ─
+async function preloadAllMessages() {
+  // Find the scrollable conversation container
+  let scroller = null;
+  const candidates = [
+    document.querySelector('[class*="overflow-y-auto"]'),
+    document.querySelector('[class*="overflow-y-scroll"]'),
+    document.querySelector('[class*="conversation"] [class*="overflow"]'),
+    document.querySelector('[class*="messages"] [class*="overflow"]'),
+    document.querySelector('main [class*="overflow"]'),
+    document.querySelector('main'),
+    document.documentElement,
+  ];
+  for (const el of candidates) {
+    if (el && el.scrollHeight > el.clientHeight + 200) { scroller = el; break; }
+  }
+  if (!scroller) return;
+
+  const savedTop = scroller.scrollTop;
+  const step     = Math.max(scroller.clientHeight * 0.8, 500);
+
+  // Scroll to top first
+  scroller.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 600));
+
+  // Scroll down step-by-step so virtualised items render
+  let prev = -1;
+  while (scroller.scrollTop !== prev) {
+    prev = scroller.scrollTop;
+    scroller.scrollTop += step;
+    await new Promise(r => setTimeout(r, 250));
+  }
+
+  // Brief pause at bottom so final batch renders
+  await new Promise(r => setTimeout(r, 400));
+
+  // Restore original position
+  scroller.scrollTop = savedTop;
+  await new Promise(r => setTimeout(r, 150));
+}
+
+// ── Claude.ai incremental scroll-scraper ─────────────────────
+// Claude removes top messages from DOM as you scroll down, so we must
+// collect messages AT EACH scroll position, not after a single preload.
+async function scrapeClaudeScrolling() {
+  const humanSels = [
+    '[data-testid="human-message"]',
+    '[data-testid="user-message"]',
+    '.human-turn',
+    "[class*='HumanTurn']",
+    "[class*='human-message']",
+  ];
+  const aiSels = [
+    '[data-testid="assistant-message"]',
+    '[data-testid*="assistant"]',
+    '[data-testid="claude-message"]',
+    '[data-testid*="claude-response"]',
+    '.assistant-turn',
+    "[class*='AssistantTurn']",
+    "[class*='AssistantMessage']",
+    "[class*='assistant-message']",
+    "[class*='claudeMessage']",
+    ".font-claude-message",
+  ];
+
+  // Walk up from a known message element to find its scrollable ancestor
+  function findScroller() {
+    const anchor = document.querySelector(humanSels.join(","));
+    if (anchor) {
+      let el = anchor.parentElement;
+      while (el && el !== document.body) {
+        if (el.scrollHeight > el.clientHeight + 200) {
+          const s = window.getComputedStyle(el);
+          if (s.overflowY === "auto" || s.overflowY === "scroll") return el;
+        }
+        el = el.parentElement;
+      }
+    }
+    const main = document.querySelector("main");
+    if (main && main.scrollHeight > main.clientHeight + 100) return main;
+    return document.documentElement;
+  }
+
+  function collectVisible(seenKeys, messages) {
+    let humanEls = [];
+    for (const sel of humanSels) {
+      const f = document.querySelectorAll(sel);
+      if (f.length) { humanEls = Array.from(f); break; }
+    }
+    let aiEls = [];
+    for (const sel of aiSels) {
+      const f = document.querySelectorAll(sel);
+      if (f.length) { aiEls = Array.from(f); break; }
+    }
+
+    let items = [];
+    if (humanEls.length && aiEls.length) {
+      items = [
+        ...humanEls.map(el => ({ role: "You", el })),
+        ...aiEls.map(el => ({ role: "AI",  el })),
+      ].sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+      );
+    } else if (humanEls.length) {
+      humanEls.forEach(humanEl => {
+        items.push({ role: "You", el: humanEl });
+        let candidate = null;
+        let node = humanEl;
+        for (let lvl = 0; lvl < 3; lvl++) {
+          const sib = node.nextElementSibling;
+          if (sib && sib.innerText?.trim().length > 10) { candidate = sib; break; }
+          if (!node.parentElement) break;
+          node = node.parentElement;
+        }
+        if (candidate) items.push({ role: "AI", el: candidate });
+      });
+    }
+
+    for (const item of items) {
+      const text = (item.el.innerText || "").trim();
+      if (!text) continue;
+      // Use first 120 chars as dedup key (handles slight rendering diffs)
+      const key = item.role + "::" + text.slice(0, 120);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      messages.push({ role: item.role, text, images: collectImagesFromEl(item.el) });
+    }
+  }
+
+  const scroller  = findScroller();
+  const savedTop  = scroller.scrollTop;
+  const step      = Math.max(scroller.clientHeight * 0.7, 400);
+  const seenKeys  = new Set();
+  const messages  = [];
+
+  // ① Scroll to very top, let first batch render
+  scroller.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 700));
+  collectVisible(seenKeys, messages);
+
+  // ② Step down, capturing each new batch as it enters the DOM
+  let prev = -1;
+  while (scroller.scrollTop !== prev) {
+    prev = scroller.scrollTop;
+    scroller.scrollTop += step;
+    await new Promise(r => setTimeout(r, 320));
+    collectVisible(seenKeys, messages);
+  }
+
+  // ③ Restore user's scroll position
+  scroller.scrollTop = savedTop;
+
+  return messages.filter((m, i, arr) =>
+    i === 0 || m.text !== arr[i - 1].text || m.images.length > 0
+  );
+}
+
 // ── Main conversation scraper (async for image support) ──────
 async function scrapeConversationAsync() {
-  const host     = window.location.hostname;
+  const host = window.location.hostname;
+
+  // Claude.ai: use incremental scroll-collector (bidirectional virtualization)
+  if (host.includes("claude.ai")) return scrapeClaudeScrolling();
+
+  await preloadAllMessages();
   const rawItems = []; // { role, text, el }
 
   try {
@@ -653,11 +815,15 @@ async function scrapeConversationAsync() {
         '[data-testid="assistant-message"]',
         '[data-testid="ai-message"]',
         '[data-testid="claude-message"]',
+        '[data-testid*="assistant"]',
+        '[data-testid*="claude-response"]',
         '.assistant-turn',
         "[class*='AssistantTurn']",
         "[class*='AssistantMessage']",
         "[class*='assistant-message']",
         "[class*='claude-message']",
+        "[class*='claudeMessage']",
+        "[class*='AIMessage']",
         "[class*='ai-response']",
         "[class*='bot-message']",
         "[data-is-streaming]",
@@ -677,13 +843,21 @@ async function scrapeConversationAsync() {
       }
 
       if (humanEls.length && !aiEls.length) {
-        // Selectors found humans but no AI — try nextElementSibling heuristic
+        // Selectors found humans but no AI — try nextElementSibling heuristic.
+        // Claude.ai wraps [data-testid="human-message"] inside a turn container,
+        // so the AI response is a sibling of the PARENT, not of the message itself.
         humanEls.forEach(humanEl => {
           rawItems.push({ role: "You", el: humanEl });
-          const sib = humanEl.nextElementSibling;
-          if (sib && sib.innerText?.trim().length > 10) {
-            rawItems.push({ role: "AI", el: sib });
+          // Walk up to 3 levels to find a sibling with substantial text
+          let candidate = null;
+          let node = humanEl;
+          for (let lvl = 0; lvl < 3; lvl++) {
+            const sib = node.nextElementSibling;
+            if (sib && sib.innerText?.trim().length > 10) { candidate = sib; break; }
+            if (!node.parentElement) break;
+            node = node.parentElement;
           }
+          if (candidate) rawItems.push({ role: "AI", el: candidate });
         });
       } else if (humanEls.length || aiEls.length) {
         humanEls.forEach(el => rawItems.push({ role: "You", el }));
