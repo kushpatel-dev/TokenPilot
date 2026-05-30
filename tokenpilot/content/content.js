@@ -11,8 +11,11 @@ const HISTORY_KEY  = "tp_prompt_history";
 const THEME_KEY    = "tp_theme";
 const TAB_KEY      = "tp_tab";
 const COMPARE_KEY  = "tp_compare";
+const CORNER_KEY   = "tp_corner";
+const COLLAPSED_KEY = "tp_collapsed";
 const MAX_HISTORY  = 50;
 const DEFAULT_COMPARE = ["gpt-4o", "sonnet", "gemini-2"];
+const VALID_CORNERS = ["br", "bl", "tr", "tl"];
 
 // ── State ────────────────────────────────────────────────────
 let detectedModel    = null;
@@ -20,7 +23,8 @@ let detectedLimit    = DEFAULT_LIMIT;
 let detectedPlatform = "";
 let detectedModelKey = "gpt-4o";
 let currentInput     = null;
-let isCollapsed      = false;
+let isCollapsed      = localStorage.getItem(COLLAPSED_KEY) === "1";
+let currentCorner    = VALID_CORNERS.includes(localStorage.getItem(CORNER_KEY)) ? localStorage.getItem(CORNER_KEY) : "br";
 let lastKnownPrompt  = "";
 let currentTab       = localStorage.getItem(TAB_KEY) || "tokens";
 let currentTheme     = localStorage.getItem(THEME_KEY) || "dark";
@@ -175,9 +179,115 @@ function findPromptInput() {
   return null;
 }
 
+// ── Corner positioning ──────────────────────────────────────
+function applyCorner(corner) {
+  if (!VALID_CORNERS.includes(corner)) corner = "br";
+  currentCorner = corner;
+  localStorage.setItem(CORNER_KEY, corner);
+  const box = document.getElementById("tp-box");
+  const fab = document.getElementById("tp-fab");
+  [box, fab].forEach(el => {
+    if (!el) return;
+    el.classList.remove("tp-corner-br", "tp-corner-bl", "tp-corner-tr", "tp-corner-tl");
+    el.classList.add(`tp-corner-${corner}`);
+  });
+}
+
+function nearestCorner(x, y) {
+  const w = window.innerWidth, h = window.innerHeight;
+  const isLeft = x < w / 2;
+  const isTop  = y < h / 2;
+  return (isTop ? "t" : "b") + (isLeft ? "l" : "r");
+}
+
+function setCollapsed(collapsed) {
+  isCollapsed = collapsed;
+  localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
+  const box = document.getElementById("tp-box");
+  const fab = document.getElementById("tp-fab");
+  if (box) box.style.display = collapsed ? "none" : "";
+  if (fab) fab.style.display = collapsed ? "inline-flex" : "none";
+}
+
+// ── Build FAB (collapsed-state floating icon) ───────────────
+function createFAB() {
+  if (document.getElementById("tp-fab")) return;
+  const fab = document.createElement("button");
+  fab.id = "tp-fab";
+  fab.type = "button";
+  fab.title = "TokenPilot — click to open, drag to move";
+  fab.innerHTML = `<span class="tp-fab-icon">${svg("flash", 18)}</span>`;
+  if (currentTheme === "light") fab.classList.add("tp-light");
+  document.body.appendChild(fab);
+  attachFabDrag(fab);
+
+  fab.addEventListener("click", e => {
+    if (fab.dataset.dragged === "1") { fab.dataset.dragged = "0"; return; }
+    setCollapsed(false);
+  });
+}
+
+function attachFabDrag(fab) {
+  let startX = 0, startY = 0, originX = 0, originY = 0;
+  let dragging = false, moved = false;
+  let pointerId = null;
+
+  const onDown = e => {
+    if (e.button !== undefined && e.button !== 0) return;
+    pointerId = e.pointerId;
+    dragging = true;
+    moved = false;
+    const r = fab.getBoundingClientRect();
+    originX = r.left;
+    originY = r.top;
+    startX = e.clientX;
+    startY = e.clientY;
+    fab.setPointerCapture?.(pointerId);
+    fab.classList.add("is-dragging");
+    fab.style.transition = "none";
+  };
+
+  const onMove = e => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (!moved && Math.hypot(dx, dy) > 4) moved = true;
+    if (!moved) return;
+    const w = fab.offsetWidth, h = fab.offsetHeight;
+    const x = Math.max(8, Math.min(window.innerWidth  - w - 8, originX + dx));
+    const y = Math.max(8, Math.min(window.innerHeight - h - 8, originY + dy));
+    fab.classList.remove("tp-corner-br", "tp-corner-bl", "tp-corner-tr", "tp-corner-tl");
+    fab.style.left = x + "px";
+    fab.style.top  = y + "px";
+    fab.style.right = "auto";
+    fab.style.bottom = "auto";
+  };
+
+  const onUp = e => {
+    if (!dragging) return;
+    dragging = false;
+    fab.releasePointerCapture?.(pointerId);
+    fab.classList.remove("is-dragging");
+    fab.style.transition = "";
+    if (moved) {
+      fab.dataset.dragged = "1";
+      const r = fab.getBoundingClientRect();
+      const corner = nearestCorner(r.left + r.width / 2, r.top + r.height / 2);
+      fab.style.left = fab.style.top = fab.style.right = fab.style.bottom = "";
+      applyCorner(corner);
+    }
+  };
+
+  fab.addEventListener("pointerdown", onDown);
+  fab.addEventListener("pointermove", onMove);
+  fab.addEventListener("pointerup", onUp);
+  fab.addEventListener("pointercancel", onUp);
+}
+
 // ── Build UI ─────────────────────────────────────────────────
 function createUI() {
   if (document.getElementById("tp-box")) return;
+  createFAB();
   const box = document.createElement("div");
   box.id = "tp-box";
   if (currentTheme === "light") box.classList.add("tp-light");
@@ -270,6 +380,8 @@ function createUI() {
 
   document.body.appendChild(box);
   bindUIEvents();
+  applyCorner(currentCorner);
+  setCollapsed(isCollapsed);
   detectModel();
   setTab(currentTab, true);
   refreshAll();
@@ -284,16 +396,13 @@ function bindUIEvents() {
     currentTheme = currentTheme === "dark" ? "light" : "dark";
     localStorage.setItem(THEME_KEY, currentTheme);
     const box = document.getElementById("tp-box");
+    const fab = document.getElementById("tp-fab");
     box.classList.toggle("tp-light", currentTheme === "light");
+    fab?.classList.toggle("tp-light", currentTheme === "light");
     $("tp-theme-btn").innerHTML = svg(currentTheme === "dark" ? "sun" : "moon", 14);
   });
 
-  $("tp-collapse-btn").addEventListener("click", () => {
-    isCollapsed = !isCollapsed;
-    const box = document.getElementById("tp-box");
-    box.classList.toggle("is-collapsed", isCollapsed);
-    $("tp-collapse-btn").innerHTML = svg(isCollapsed ? "plus" : "minus", 14);
-  });
+  $("tp-collapse-btn").addEventListener("click", () => setCollapsed(true));
 
   document.querySelectorAll("#tp-tabs .tp-tab").forEach(btn => {
     btn.addEventListener("click", () => setTab(btn.dataset.tab));
@@ -995,6 +1104,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 // ── Lifecycle ────────────────────────────────────────────────
 function removeUI() {
   document.getElementById("tp-box")?.remove();
+  document.getElementById("tp-fab")?.remove();
   aihObserver?.disconnect(); aihObserver = null;
   clearInterval(aihInterval); aihInterval = null;
   document.querySelectorAll("[data-tp-attached]").forEach(el => delete el.dataset.tpAttached);

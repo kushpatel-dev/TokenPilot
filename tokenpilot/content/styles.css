@@ -58,8 +58,6 @@
 /* ─── Panel shell ─── */
 #tp-box {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
   width: 340px;
   font-family: 'Geist', system-ui, -apple-system, sans-serif;
   font-size: 13px;
@@ -546,9 +544,52 @@
 #tp-box .tp-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
 #tp-box .tp-toast svg { color: var(--ok); }
 
-/* ─── Collapsed ─── */
-#tp-box.is-collapsed { width: 260px; }
-#tp-box.is-collapsed .tp-hero,
-#tp-box.is-collapsed .tp-tabs,
-#tp-box.is-collapsed .tp-tabbody { display: none; }
-#tp-box.is-collapsed .tp-header { border-bottom: none; }
+/* ─── Corner anchoring (panel + FAB) ─── */
+#tp-box.tp-corner-br, #tp-fab.tp-corner-br { right: 20px; bottom: 20px; left: auto; top: auto; }
+#tp-box.tp-corner-bl, #tp-fab.tp-corner-bl { left:  20px; bottom: 20px; right: auto; top: auto; }
+#tp-box.tp-corner-tr, #tp-fab.tp-corner-tr { right: 20px; top:    20px; left: auto; bottom: auto; }
+#tp-box.tp-corner-tl, #tp-fab.tp-corner-tl { left:  20px; top:    20px; right: auto; bottom: auto; }
+
+/* ─── Floating action button (collapsed state) ─── */
+#tp-fab {
+  position: fixed;
+  width: 44px; height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--stroke, rgba(255,255,255,0.08));
+  background: linear-gradient(135deg, #8b5cf6, #c084fc 70%, #f0abfc);
+  color: #fff;
+  display: none;
+  align-items: center; justify-content: center;
+  cursor: grab;
+  z-index: 2147483647;
+  padding: 0;
+  box-shadow: 0 8px 28px rgba(139,92,246,0.45), 0 2px 6px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.35);
+  transition: transform 0.18s cubic-bezier(.4,0,.2,1), box-shadow 0.18s, border-radius 0.18s;
+  touch-action: none;
+  user-select: none;
+  animation: tp-fab-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+#tp-fab .tp-fab-icon {
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+#tp-fab:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 12px 32px rgba(139,92,246,0.55), 0 3px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.4);
+}
+#tp-fab:active { cursor: grabbing; transform: scale(0.96); }
+#tp-fab.is-dragging {
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 16px 40px rgba(139,92,246,0.55), 0 4px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+  transform: scale(1.06);
+}
+#tp-fab.tp-light {
+  border-color: rgba(15,15,25,0.12);
+  box-shadow: 0 8px 28px rgba(124,58,237,0.35), 0 2px 6px rgba(15,15,25,0.12), inset 0 1px 0 rgba(255,255,255,0.5);
+}
+@keyframes tp-fab-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
