@@ -33,26 +33,26 @@
 }
 
 #tp-box.tp-light {
-  --bg: rgba(255,255,255,0.7);
-  --bg-solid: #fafafa;
-  --stroke: rgba(15,15,25,0.08);
-  --stroke-2: rgba(15,15,25,0.05);
+  --bg: rgba(255,255,255,0.92);
+  --bg-solid: #ffffff;
+  --stroke: rgba(15,15,25,0.13);
+  --stroke-2: rgba(15,15,25,0.08);
   --text: #0f0f19;
-  --text-dim: #52525b;
-  --text-dim2: #71717a;
-  --text-faint: #a1a1aa;
+  --text-dim: #3f3f46;
+  --text-dim2: #52525b;
+  --text-faint: #71717a;
   --accent: #7c3aed;
   --accent-2: #a855f7;
-  --accent-bg: rgba(124,58,237,0.08);
-  --accent-border: rgba(124,58,237,0.2);
+  --accent-bg: rgba(124,58,237,0.1);
+  --accent-border: rgba(124,58,237,0.25);
   --danger: #dc2626;
   --warn: #d97706;
   --ok: #059669;
-  --surface: rgba(15,15,25,0.025);
-  --surface-2: rgba(15,15,25,0.05);
-  --shadow: 0 20px 60px rgba(15,15,25,0.14), 0 2px 6px rgba(15,15,25,0.06);
-  --inner-hl: inset 0 1px 0 rgba(255,255,255,0.9);
-  --noise-opacity: 0.02;
+  --surface: rgba(15,15,25,0.045);
+  --surface-2: rgba(15,15,25,0.075);
+  --shadow: 0 20px 60px rgba(15,15,25,0.12), 0 2px 8px rgba(15,15,25,0.08), 0 0 0 1px rgba(15,15,25,0.06);
+  --inner-hl: inset 0 1px 0 rgba(255,255,255,0.95);
+  --noise-opacity: 0.015;
 }
 
 /* ─── Panel shell ─── */
@@ -100,6 +100,30 @@
 #tp-box[data-state="danger"]::after  { background: radial-gradient(circle, #ef4444, transparent 60%); opacity: 0.16; }
 
 #tp-box > * { position: relative; z-index: 1; }
+
+/* Light mode: reduce blur, boost opacity for crisp look */
+#tp-box.tp-light {
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+#tp-box.tp-light::after { opacity: 0.07; }
+#tp-box.tp-light .tp-tabs-indicator {
+  background: rgba(255,255,255,0.85);
+  box-shadow: 0 1px 3px rgba(15,15,25,0.1), inset 0 1px 0 rgba(255,255,255,0.95);
+  border: 1px solid rgba(15,15,25,0.08);
+}
+#tp-box.tp-light .tp-history-item {
+  background: rgba(15,15,25,0.03);
+}
+#tp-box.tp-light .tp-history-item:hover {
+  background: rgba(15,15,25,0.06);
+}
+#tp-box.tp-light .tp-search {
+  background: rgba(15,15,25,0.03);
+}
+#tp-box.tp-light .tp-compare-bar {
+  background: rgba(15,15,25,0.06);
+}
 
 @keyframes tp-in {
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
