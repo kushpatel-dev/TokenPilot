@@ -10,11 +10,9 @@ console.log("[TokenPilot] v3.3 loaded");
 const HISTORY_KEY  = "tp_prompt_history";
 const THEME_KEY    = "tp_theme";
 const TAB_KEY      = "tp_tab";
-const COMPARE_KEY  = "tp_compare";
 const CORNER_KEY   = "tp_corner";
 const COLLAPSED_KEY = "tp_collapsed";
 const MAX_HISTORY  = 50;
-const DEFAULT_COMPARE = ["gpt-4o", "sonnet", "gemini-2"];
 const VALID_CORNERS = ["br", "bl", "tr", "tl"];
 
 // ── State ────────────────────────────────────────────────────
@@ -26,10 +24,9 @@ let currentInput     = null;
 let isCollapsed      = localStorage.getItem(COLLAPSED_KEY) === "1";
 let currentCorner    = VALID_CORNERS.includes(localStorage.getItem(CORNER_KEY)) ? localStorage.getItem(CORNER_KEY) : "br";
 let lastKnownPrompt  = "";
-let currentTab       = localStorage.getItem(TAB_KEY) || "tokens";
+let currentTab       = (localStorage.getItem(TAB_KEY) === "compare" ? "tokens" : localStorage.getItem(TAB_KEY)) || "tokens";
 let currentTheme     = localStorage.getItem(THEME_KEY) || "dark";
 let searchQuery      = "";
-let compareModels    = JSON.parse(localStorage.getItem(COMPARE_KEY) || "null") || DEFAULT_COMPARE;
 let aihObserver      = null;
 let aihInterval      = null;
 let flashTimer       = null;
@@ -49,7 +46,7 @@ const ICONS = {
   download:`<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></g>`,
   gauge:   `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3.05 11a9 9 0 1 1 0 2"/><path d="M12 14 8 10"/><circle cx="12" cy="14" r="1.5" fill="currentColor"/></g>`,
   history: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></g>`,
-  compare: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></g>`,
+  transfer: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></g>`,
   check:   `<path d="M5 12l5 5L20 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`,
   close:   `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></g>`,
 };
@@ -342,7 +339,7 @@ function createUI() {
       <div class="tp-tabs-indicator" id="tp-tabs-indicator"></div>
       <button class="tp-tab" data-tab="tokens">${svg("gauge", 13)}<span>Live</span></button>
       <button class="tp-tab" data-tab="history">${svg("history", 13)}<span>History</span></button>
-      <button class="tp-tab" data-tab="compare">${svg("compare", 13)}<span>Compare</span></button>
+      <button class="tp-tab" data-tab="transfer">${svg("transfer", 13)}<span>Transfer</span></button>
     </div>
 
     <div class="tp-tabbody">
@@ -369,9 +366,13 @@ function createUI() {
         </div>
       </div>
 
-      <div class="tp-pane tp-compare" data-pane="compare" style="display:none">
-        <div class="tp-compare-head" id="tp-compare-head">0 tokens · across models</div>
-        <div class="tp-compare-list" id="tp-compare-list"></div>
+      <div class="tp-pane tp-transfer" data-pane="transfer" style="display:none">
+        <div class="tp-transfer-desc">Export this conversation as Markdown and open it in another AI.</div>
+        <button class="tp-transfer-btn" id="tp-transfer-btn">
+          ${svg("transfer", 14)}
+          Transfer Chat to Another AI
+        </button>
+        <div class="tp-transfer-status" id="tp-transfer-status"></div>
       </div>
     </div>
 
@@ -420,6 +421,7 @@ function bindUIEvents() {
   });
   $("tp-export-csv").addEventListener("click", () => exportHistory("csv"));
   $("tp-export-json").addEventListener("click", () => exportHistory("json"));
+  $("tp-transfer-btn").addEventListener("click", transferChat);
 }
 
 // ── Tab switching ────────────────────────────────────────────
@@ -437,7 +439,6 @@ function setTab(tab, instant = false) {
     if (instant) requestAnimationFrame(() => { indicator.style.transition = ""; });
   }
   if (tab === "history") renderHistory();
-  if (tab === "compare") renderCompare();
 }
 
 // ── Refresh all dynamic bits ─────────────────────────────────
@@ -513,7 +514,6 @@ function updateTokenDisplay() {
       }
     }
 
-    if (currentTab === "compare") renderCompare();
   } catch (e) { console.warn("[TokenPilot] updateTokenDisplay error:", e); }
 }
 
@@ -570,39 +570,72 @@ function renderHistory() {
   });
 }
 
-// ── Compare render ───────────────────────────────────────────
-function renderCompare() {
-  const head = document.getElementById("tp-compare-head");
-  const list = document.getElementById("tp-compare-list");
-  if (!list) return;
-  const text = currentInput ? getInputText(currentInput) : "";
-  const tokens = estimateTokens(text);
-  if (head) head.textContent = `${tokens.toLocaleString()} tokens · across models`;
-  list.innerHTML = "";
+// ── Transfer chat ────────────────────────────────────────────
+function transferChat() {
+  const btn = document.getElementById("tp-transfer-btn");
+  const statusEl = document.getElementById("tp-transfer-status");
+  const setMsg = (msg, cls) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.className = "tp-transfer-status" + (cls ? " " + cls : "");
+  };
 
-  const rows = [
-    { key: "gpt-4o",   color: "#10a37f" },
-    { key: "sonnet",   color: "#d97757" },
-    { key: "gemini-2", color: "#4285f4" },
-    { key: "o3",       color: "#7c3aed" },
-    { key: "mistral",  color: "#ff7000" },
-    { key: "deepseek", color: "#4a6cf7" },
-  ];
-  rows.forEach(r => {
-    const m = MODEL_DB[r.key];
-    if (!m) return;
-    const pct = Math.min((tokens / m.limit) * 100, 100);
-    const row = document.createElement("div");
-    row.className = "tp-compare-row";
-    row.innerHTML = `
-      <div class="tp-compare-name"><span class="tp-model-dot" style="background:${r.color}"></span>${m.name}</div>
-      <div class="tp-compare-bar-wrap">
-        <div class="tp-compare-bar"><div class="tp-compare-bar-fill" style="width:${pct}%;background:${r.color}"></div></div>
-        <div class="tp-compare-pct">${pct.toFixed(2)}%</div>
-      </div>
-      <div class="tp-compare-limit">${formatNumber(m.limit)}</div>
-    `;
-    list.appendChild(row);
+  if (btn) btn.disabled = true;
+  setMsg("Capturing conversation…");
+
+  scrapeConversationAsync().then(messages => {
+    if (btn) btn.disabled = false;
+    if (!messages || messages.length === 0) {
+      setMsg("No conversation found on this page.", "err");
+      return;
+    }
+
+    const host    = detectedPlatform || window.location.hostname;
+    const aiName  = detectedModel || "AI";
+    const date    = new Date().toLocaleString();
+    const safeName = host.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
+
+    const frontmatter =
+      "---\ntitle: TokenPilot Chat Transfer\nplatform: " + host +
+      "\nmodel: " + aiName + "\nexported: " + date +
+      "\nmessages: " + messages.length + "\n---\n\n";
+
+    const instructions =
+      "> **Instructions for the receiving AI**\n" +
+      "> This conversation was originally held with **" + aiName + "** on `" + host + "`.\n" +
+      "> Read every message carefully, absorb all context, then continue as the AI assistant.\n" +
+      "> Start your reply with a one-line recap of what was discussed.\n\n---\n\n## Conversation Transcript\n\n";
+
+    let body = "";
+    messages.forEach((m, i) => {
+      const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
+      body += (i > 0 ? "\n---\n\n" : "") + heading + "\n\n";
+      if (m.text) body += m.text + "\n\n";
+      if (m.images && m.images.length > 0) {
+        m.images.forEach(desc => {
+          const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
+          body += "[" + prefix + ": " + desc + "]\n\n";
+        });
+      }
+    });
+
+    const footer = "\n---\n\n## ▶ Continue from here\n\n_Paste your next message below after uploading this file to a new chat._\n";
+    const content = frontmatter + instructions + body + footer;
+
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "tokenpilot-transfer-" + safeName + "-" + Date.now() + ".md";
+    a.click();
+    URL.revokeObjectURL(url);
+
+    setMsg("✓ " + messages.length + " msgs exported!", "ok");
+    setTimeout(() => setMsg(""), 5000);
+  }).catch(e => {
+    if (btn) btn.disabled = false;
+    console.warn("[TokenPilot] transferChat error:", e);
+    setMsg("Export failed. Try reloading the page.", "err");
   });
 }
 

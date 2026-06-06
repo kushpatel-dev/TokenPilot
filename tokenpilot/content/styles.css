@@ -119,8 +119,10 @@
 #tp-box.tp-light .tp-search {
   background: rgba(15,15,25,0.03);
 }
-#tp-box.tp-light .tp-compare-bar {
-  background: rgba(15,15,25,0.06);
+#tp-box.tp-light .tp-transfer-btn {
+  background: rgba(15,15,25,0.04);
+  border-color: rgba(15,15,25,0.12);
+  color: var(--accent);
 }
 
 @keyframes tp-in {
@@ -475,54 +477,54 @@
   border-color: rgba(220,38,38,0.15);
 }
 
-/* ── Compare tab ── */
-#tp-box .tp-compare-head {
-  font-size: 10.5px;
-  font-family: 'Geist Mono', ui-monospace, monospace;
-  color: var(--text-dim2);
-  margin-bottom: 8px;
+/* ── Transfer tab ── */
+#tp-box .tp-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px 0;
 }
-#tp-box .tp-compare-list { display: flex; flex-direction: column; gap: 7px; }
-#tp-box .tp-compare-row {
-  display: grid;
-  grid-template-columns: 92px 1fr 58px;
+#tp-box .tp-transfer-desc {
+  font-size: 11px;
+  color: var(--text-dim2);
+  line-height: 1.5;
+  text-align: center;
+  padding: 0 4px;
+}
+#tp-box .tp-transfer-btn {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 2px;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  color: var(--accent);
+  font-family: 'Geist', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, opacity 0.2s;
 }
-#tp-box .tp-compare-name {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11.5px;
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+#tp-box .tp-transfer-btn:hover {
+  background: rgba(167,139,250,0.22);
+  border-color: rgba(167,139,250,0.45);
 }
-#tp-box .tp-compare-bar-wrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-#tp-box .tp-compare-bar {
-  height: 6px;
-  background: var(--surface-2);
-  border-radius: 99px;
-  overflow: hidden;
-}
-#tp-box .tp-compare-bar-fill {
-  height: 100%;
-  border-radius: 99px;
-  transition: width 0.5s cubic-bezier(.4,0,.2,1);
-  background: var(--accent);
-}
-#tp-box .tp-compare-pct {
-  font-family: 'Geist Mono', ui-monospace, monospace;
-  font-size: 9.5px;
-  color: var(--text-dim2);
-  font-variant-numeric: tabular-nums;
-}
-#tp-box .tp-compare-limit {
-  font-family: 'Geist Mono', ui-monospace, monospace;
+#tp-box .tp-transfer-btn:active { opacity: 0.75; }
+#tp-box .tp-transfer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#tp-box .tp-transfer-btn svg { flex-shrink: 0; }
+#tp-box .tp-transfer-status {
   font-size: 10.5px;
-  color: var(--text-dim);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+  color: var(--text-dim2);
+  text-align: center;
+  min-height: 14px;
+  transition: color 0.2s;
 }
+#tp-box .tp-transfer-status.ok  { color: var(--ok); }
+#tp-box .tp-transfer-status.err { color: #f87171; }
 
 /* ─── Toast ─── */
 #tp-box .tp-toast {
