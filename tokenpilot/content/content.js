@@ -82,10 +82,31 @@ function detectModel() {
         if (el?.textContent.trim()) { modelText = el.textContent.trim().toLowerCase(); break; }
       }
     } else if (host.includes("claude")) {
-      const selectors = ['button[data-testid="model-selector"]','[class*="model-selector"]','button[class*="ModelPicker"]'];
+      // Try data-testid and class selectors first
+      const selectors = [
+        'button[data-testid="model-selector"]',
+        '[class*="model-selector"]',
+        'button[class*="ModelPicker"]',
+        'button[class*="model"]',
+        '[aria-label*="model" i]',
+        '[class*="ModelSwitcher"]',
+        '[data-testid*="model"]',
+      ];
       for (const sel of selectors) {
         const el = document.querySelector(sel);
         if (el?.textContent.trim()) { modelText = el.textContent.trim().toLowerCase(); break; }
+      }
+      // Fallback: scan all buttons for known Claude model name keywords
+      if (!modelText || modelText === "sonnet") {
+        const knownModels = ["opus", "sonnet", "haiku"];
+        const allBtns = document.querySelectorAll("button, [role='button'], span[class*='model']");
+        for (const btn of allBtns) {
+          const txt = (btn.textContent || "").trim().toLowerCase();
+          if (txt.length < 60 && knownModels.some(m => txt.includes(m))) {
+            modelText = txt;
+            break;
+          }
+        }
       }
     } else if (host.includes("gemini")) {
       const el = document.querySelector('mat-select, [class*="model"], button[aria-label*="model"]');
@@ -843,6 +864,7 @@ async function scrapeClaudeScrolling() {
   }
 
   function collectVisible(seenKeys, messages) {
+    // ── APPROACH 1: data-testid selectors ────────────────────────
     let humanEls = [];
     for (const sel of humanSels) {
       const f = document.querySelectorAll(sel);
@@ -855,32 +877,101 @@ async function scrapeClaudeScrolling() {
     }
 
     let items = [];
+
     if (humanEls.length && aiEls.length) {
+      // Best case: both selectors found elements
       items = [
         ...humanEls.map(el => ({ role: "You", el })),
         ...aiEls.map(el => ({ role: "AI",  el })),
       ].sort((a, b) =>
         a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
       );
-    } else if (humanEls.length) {
-      humanEls.forEach(humanEl => {
-        items.push({ role: "You", el: humanEl });
-        let candidate = null;
-        let node = humanEl;
-        for (let lvl = 0; lvl < 3; lvl++) {
-          const sib = node.nextElementSibling;
-          if (sib && sib.innerText?.trim().length > 10) { candidate = sib; break; }
-          if (!node.parentElement) break;
-          node = node.parentElement;
-        }
-        if (candidate) items.push({ role: "AI", el: candidate });
+
+    } else {
+      // ── APPROACH 2: Feedback-button detection ─────────────────
+      // KEY INSIGHT: Claude's AI responses always have thumbs-up/down feedback
+      // buttons. Human messages NEVER have them. This is DOM-change-proof.
+      const seenContainers = new WeakSet();
+
+      // Find all copy buttons (present on EVERY message in Claude)
+      const copyBtns = Array.from(document.querySelectorAll(
+        'button[aria-label*="opy" i], button[title*="opy" i]'
+      )).filter(btn => {
+        // Exclude copy buttons inside code blocks (they have different parents)
+        const pre = btn.closest("pre, code, [class*='code']");
+        return !pre;
       });
+
+      for (const copyBtn of copyBtns) {
+        // Walk up from copy button to find the message container
+        let el = copyBtn.parentElement;
+        let msgContainer = null;
+
+        for (let i = 0; i < 12; i++) {
+          if (!el || el === document.body) break;
+          const text = el.innerText?.trim();
+          // Message containers have substantial text and reasonable dimensions
+          if (text && text.length > 20) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 150) {
+              msgContainer = el;
+              break;
+            }
+          }
+          el = el.parentElement;
+        }
+
+        if (!msgContainer || seenContainers.has(msgContainer)) continue;
+        seenContainers.add(msgContainer);
+
+        // AI messages: have thumbs-up / thumbs-down / feedback buttons
+        // Human messages: NEVER have these buttons
+        const hasFeedback = !!msgContainer.querySelector(
+          'button[aria-label*="humb" i], ' +
+          'button[aria-label*="Good response" i], ' +
+          'button[aria-label*="Bad response" i], ' +
+          'button[aria-label*="Like" i], ' +
+          'button[aria-label*="Dislike" i], ' +
+          'button[aria-label*="eedback" i], ' +
+          'button[data-testid*="feedback" i], ' +
+          'button[data-testid*="thumb" i]'
+        );
+
+        items.push({ role: hasFeedback ? "AI" : "You", el: msgContainer });
+      }
+
+      // Sort by DOM order
+      items.sort((a, b) =>
+        a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+      );
+
+      // ── APPROACH 3: Alternation fallback ──────────────────────
+      // If feedback detection found nothing, use human els + sibling walk
+      if (items.length === 0 && humanEls.length > 0) {
+        humanEls.forEach(humanEl => {
+          items.push({ role: "You", el: humanEl });
+          // Find AI response: walk to next sibling containers
+          let node = humanEl;
+          for (let lvl = 0; lvl < 6; lvl++) {
+            const sib = node.nextElementSibling;
+            if (sib) {
+              const sibText = sib.innerText?.trim();
+              if (sibText && sibText.length > 20) {
+                items.push({ role: "AI", el: sib });
+                break;
+              }
+            }
+            if (!node.parentElement) break;
+            node = node.parentElement;
+          }
+        });
+      }
     }
 
+    // ── Collect text + images from each item ─────────────────────
     for (const item of items) {
       const text = (item.el.innerText || "").trim();
       if (!text) continue;
-      // Use first 120 chars as dedup key (handles slight rendering diffs)
       const key = item.role + "::" + text.slice(0, 120);
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);

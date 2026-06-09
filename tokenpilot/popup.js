@@ -30,6 +30,13 @@
 
   // ── Build Markdown file with embedded images ──────────────────
   function buildMarkdown(messages, aiName, host, date) {
+
+    // Pull first user message + last AI message for briefing block
+    const firstUser = messages.find(m => m.role === "You");
+    const lastAI    = [...messages].reverse().find(m => m.role !== "You");
+    const origAsk   = firstUser ? firstUser.text.split("\n")[0].slice(0, 150) : "See transcript below";
+    const lastLeft  = lastAI    ? lastAI.text.split("\n")[0].slice(0, 150)    : "See transcript below";
+
     const frontmatter =
       "---\n" +
       "title: TokenPilot Chat Transfer\n" +
@@ -37,6 +44,18 @@
       "model: " + aiName + "\n" +
       "exported: " + date + "\n" +
       "messages: " + messages.length + "\n" +
+      "---\n\n";
+
+    // Briefing block — gives receiving AI instant context (matches Tally format)
+    const briefing =
+      "## Briefing\n\n" +
+      "You are continuing a working session that began on **" + host + "** with **" + aiName + "**. " +
+      "Read the full transcript below and pick up exactly where the previous assistant left off — " +
+      "don't re-introduce yourself, match the user's working style.\n\n" +
+      "**Original ask:**\n" +
+      "> " + origAsk + "\n\n" +
+      "**Where the previous assistant left off:**\n" +
+      "> " + lastLeft + "…\n\n" +
       "---\n\n";
 
     const instructions =
@@ -70,7 +89,7 @@
     }
 
     // Token estimate on full content
-    const contentSoFar  = frontmatter + instructions + body;
+    const contentSoFar  = frontmatter + briefing + instructions + body;
     const tokenEstimate = estimateTokens(contentSoFar);
     const fmtTok        = fmtTokens(tokenEstimate);
 
