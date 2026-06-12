@@ -169,6 +169,66 @@ input:checked + .slider::before { transform: translateX(16px); background: #fff;
 .transfer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .transfer-btn svg { flex-shrink: 0; }
 
+/* ── Send to AI row (target select + send button) ── */
+.send-row {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.target-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 10px;
+  background: var(--surface);
+  border: 1px solid var(--stroke-2);
+  border-radius: 11px;
+  color: var(--text);
+  font-family: 'Geist', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position:
+    right 12px top 50%,
+    right 7px  top 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 24px;
+}
+.target-select:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+.target-select option { background: #1a1a22; color: var(--text); }
+
+.send-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #8b5cf6, #c084fc);
+  border: 1px solid rgba(167,139,250,0.55);
+  border-radius: 11px;
+  color: #fff;
+  font-family: 'Geist', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: opacity 0.2s, filter 0.2s;
+}
+.send-btn:hover { filter: brightness(1.08); }
+.send-btn:active { opacity: 0.8; }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+.send-btn svg { flex-shrink: 0; }
+
 /* Transfer status feedback */
 .transfer-status {
   font-size: 10.5px;
@@ -236,13 +296,32 @@ input:checked + .slider::before { transform: translateX(16px); background: #fff;
     </div>
   </div>
 
-  <!-- ── Transfer Chat ── -->
+  <!-- ── Transfer Chat (download .md) ── -->
   <button class="transfer-btn" id="transfer-btn">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
     </svg>
-    Transfer Chat to Another AI
+    Download Chat as .md
   </button>
+
+  <!-- ── Send to another AI (auto-paste) ── -->
+  <div class="send-row">
+    <select class="target-select" id="target-select" aria-label="Target AI">
+      <option value="chatgpt">ChatGPT</option>
+      <option value="claude">Claude</option>
+      <option value="gemini">Gemini</option>
+      <option value="aistudio">AI Studio</option>
+      <option value="perplexity">Perplexity</option>
+      <option value="mistral">Mistral</option>
+      <option value="deepseek">DeepSeek</option>
+    </select>
+    <button class="send-btn" id="send-btn" title="Open target AI in new tab and auto-paste the conversation">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+      </svg>
+      Send
+    </button>
+  </div>
   <div class="transfer-status" id="transfer-status"></div>
 
   <p class="info">Live token counter, prompt insights &amp; history across ChatGPT, Claude, Gemini and more.</p>

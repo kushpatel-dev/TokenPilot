@@ -31,7 +31,6 @@
   // ── Build Markdown file with embedded images ──────────────────
   function buildMarkdown(messages, aiName, host, date) {
 
-    // Pull first user message + last AI message for briefing block
     const firstUser = messages.find(m => m.role === "You");
     const lastAI    = [...messages].reverse().find(m => m.role !== "You");
     const origAsk   = firstUser ? firstUser.text.split("\n")[0].slice(0, 150) : "See transcript below";
@@ -46,7 +45,6 @@
       "messages: " + messages.length + "\n" +
       "---\n\n";
 
-    // Briefing block — gives receiving AI instant context (matches Tally format)
     const briefing =
       "## Briefing\n\n" +
       "You are continuing a working session that began on **" + host + "** with **" + aiName + "**. " +
@@ -71,14 +69,12 @@
 
     for (let i = 0; i < messages.length; i++) {
       const m       = messages[i];
-      const heading = m.role === "You" ? "### \uD83E\uDDD1 You" : "### \uD83E\uDD16 " + aiName;
+      const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
       const divider = i > 0 ? "\n---\n\n" : "";
 
-      // Text block
       body += divider + heading + "\n\n";
       if (m.text) body += m.text + "\n\n";
 
-      // Image references — role-aware labels, no base64
       if (m.images && m.images.length > 0) {
         for (const desc of m.images) {
           const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
@@ -88,14 +84,13 @@
       }
     }
 
-    // Token estimate on full content
     const contentSoFar  = frontmatter + briefing + instructions + body;
     const tokenEstimate = estimateTokens(contentSoFar);
     const fmtTok        = fmtTokens(tokenEstimate);
 
     const footer =
       "\n---\n\n" +
-      "## \u25B6 Continue from here\n\n" +
+      "## ▶ Continue from here\n\n" +
       "_Paste your next message below after uploading this file to a new chat._\n\n" +
       "---\n\n" +
       "<!-- TokenPilot Transfer Metadata\n" +
@@ -142,14 +137,34 @@
     } catch { return false; }
   }
 
-  // ── Scrape and build ──────────────────────────────────────────
-  function doScrape(tab, setMsg, btn) {
+  // ── Target AI registry (host + new-chat URL) ──────────────────
+  const TARGETS = {
+    chatgpt:    { name: "ChatGPT",    url: "https://chatgpt.com/" },
+    claude:     { name: "Claude",     url: "https://claude.ai/new" },
+    gemini:     { name: "Gemini",     url: "https://gemini.google.com/app" },
+    aistudio:   { name: "AI Studio",  url: "https://aistudio.google.com/prompts/new_chat" },
+    perplexity: { name: "Perplexity", url: "https://www.perplexity.ai/" },
+    mistral:    { name: "Mistral",    url: "https://chat.mistral.ai/chat" },
+    deepseek:   { name: "DeepSeek",   url: "https://chat.deepseek.com/" }
+  };
+
+  function statusSummary(r) {
+    const imgNote = r.imgCount > 0 ? " · " + r.imgCount + " image" + (r.imgCount > 1 ? "s" : "") : "";
+    return "✓ " + r.messages + " msgs · etm: " + r.fmtTok + " tokens" + imgNote;
+  }
+
+  // ── Scrape and build payload from active tab ──────────────────
+  // onResult({ ok, content?, fmtTok?, imgCount?, messages?, host?, error? })
+  function doScrape(tab, setMsg, btn, onResult) {
+
+    function finish(payload) {
+      btn.disabled = false;
+      onResult(payload);
+    }
 
     function handleResponse(res) {
-      btn.disabled = false;
-
       if (!res || !res.messages || res.messages.length === 0) {
-        setMsg("No conversation found on this page.", "err");
+        finish({ ok: false, error: "No conversation found on this page." });
         return;
       }
 
@@ -158,40 +173,36 @@
       const aiName = model    || "AI";
       const host   = platform || tab.url || "Unknown";
 
-      setMsg("Building .md file…");
+      setMsg("Building transfer payload…");
 
-      const { content, fmtTok, imgCount } = buildMarkdown(messages, aiName, host, date);
-      downloadMd(content, host);
-
-      // Status: show message count + token count + image count
-      const imgNote = imgCount > 0 ? " · " + imgCount + " image" + (imgCount > 1 ? "s" : "") : "";
-      setMsg("\u2713 " + messages.length + " msgs · etm: " + fmtTok + " tokens" + imgNote, "ok");
-      setTimeout(() => setMsg(""), 6000);
+      const built = buildMarkdown(messages, aiName, host, date);
+      finish({
+        ok:       true,
+        content:  built.content,
+        fmtTok:   built.fmtTok,
+        imgCount: built.imgCount,
+        messages: messages.length,
+        host:     host
+      });
     }
 
-    // Guard: bail immediately if not an AI chat page — no Chrome API calls, no errors panel warnings
     if (!tab.url || !isAllowedTab(tab.url)) {
-      btn.disabled = false;
-      setMsg("Open an AI chat page first.", "err");
+      finish({ ok: false, error: "Open an AI chat page first." });
       return;
     }
 
-    // Inject scripts (content.js guards prevent double-init)
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files:  ["data/models.js", "utils/tokenCounter.js", "content/content.js"]
     }, () => {
       if (chrome.runtime.lastError) {
-        btn.disabled = false;
-        setMsg("Cannot access this page. Open an AI chat first.", "err");
+        finish({ ok: false, error: "Cannot access this page. Open an AI chat first." });
         return;
       }
-      // Brief delay so the (re-)injected script initialises, then scrape
       setTimeout(() => {
         chrome.tabs.sendMessage(tab.id, { type: "SCRAPE_CONVERSATION" }, (res) => {
           if (chrome.runtime.lastError || !res) {
-            btn.disabled = false;
-            setMsg("Reload the AI page, then try again.", "err");
+            finish({ ok: false, error: "Reload the AI page, then try again." });
             return;
           }
           handleResponse(res);
@@ -200,7 +211,7 @@
     });
   }
 
-  // ── Transfer Chat ─────────────────────────────────────────────
+  // ── Transfer Chat (download .md) ──────────────────────────────
   function transferChat() {
     const btn      = document.getElementById("transfer-btn");
     const statusEl = document.getElementById("transfer-status");
@@ -221,7 +232,64 @@
         btn.disabled = false;
         return;
       }
-      doScrape(tab, setMsg, btn);
+      doScrape(tab, setMsg, btn, (r) => {
+        if (!r.ok) { setMsg(r.error, "err"); return; }
+        downloadMd(r.content, r.host);
+        setMsg(statusSummary(r), "ok");
+        setTimeout(() => setMsg(""), 6000);
+      });
+    });
+  }
+
+  // ── Send to AI (auto-paste into new tab) ──────────────────────
+  function sendToAI() {
+    const btn       = document.getElementById("send-btn");
+    const selectEl  = document.getElementById("target-select");
+    const statusEl  = document.getElementById("transfer-status");
+    const targetKey = selectEl ? selectEl.value : "chatgpt";
+    const target    = TARGETS[targetKey];
+
+    function setMsg(msg, type) {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className   = "transfer-status" + (type ? " " + type : "");
+    }
+
+    if (!target) { setMsg("Unknown target.", "err"); return; }
+
+    btn.disabled = true;
+    setMsg("Reading conversation…");
+
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
+      if (!tab || !tab.id) {
+        setMsg("No active tab found.", "err");
+        btn.disabled = false;
+        return;
+      }
+      doScrape(tab, setMsg, btn, (r) => {
+        if (!r.ok) { setMsg(r.error, "err"); return; }
+
+        const payload = {
+          target:     targetKey,
+          content:    r.content,
+          autoSubmit: true,
+          createdAt:  Date.now()
+        };
+
+        setMsg("Opening " + target.name + "…");
+
+        chrome.storage.local.set({ tp_pending_paste: payload }, () => {
+          if (chrome.runtime.lastError) {
+            setMsg("Failed to stage payload.", "err");
+            return;
+          }
+          chrome.tabs.create({ url: target.url, active: true }, () => {
+            setMsg(statusSummary(r) + " · sent to " + target.name, "ok");
+            setTimeout(() => setMsg(""), 6000);
+          });
+        });
+      });
     });
   }
 
@@ -231,6 +299,7 @@
     const tokensEl = document.getElementById("total-tokens");
     const countEl  = document.getElementById("prompt-count");
     const xferBtn  = document.getElementById("transfer-btn");
+    const sendBtn  = document.getElementById("send-btn");
 
     if (!toggle) return;
 
@@ -253,6 +322,7 @@
     });
 
     if (xferBtn) xferBtn.addEventListener("click", transferChat);
+    if (sendBtn) sendBtn.addEventListener("click", sendToAI);
   }
 
   if (document.readyState === "loading") {

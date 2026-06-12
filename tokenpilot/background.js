@@ -66,6 +66,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
       }
 
+      // Content script asks service worker to open a target AI in a new tab.
+      // Content scripts cannot call chrome.tabs.create directly.
+      case "OPEN_TARGET_TAB": {
+        const url = request.url;
+        if (typeof url !== "string" || !/^https:\/\//.test(url)) {
+          sendResponse({ ok: false, error: "Invalid URL" });
+          break;
+        }
+        chrome.tabs.create({ url, active: true }, (tab) => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            sendResponse({ ok: true, tabId: tab && tab.id });
+          }
+        });
+        return true; // async sendResponse
+      }
+
       default:
         sendResponse({ ok: false, error: "Unknown message type" });
     }

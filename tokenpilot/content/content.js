@@ -393,6 +393,21 @@ function createUI() {
           ${svg("transfer", 14)}
           Transfer Chat to Another AI
         </button>
+        <div class="tp-send-row">
+          <select class="tp-target-select" id="tp-target-select" aria-label="Target AI">
+            <option value="chatgpt">ChatGPT</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="aistudio">AI Studio</option>
+            <option value="perplexity">Perplexity</option>
+            <option value="mistral">Mistral</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+          <button class="tp-send-btn" id="tp-send-btn" title="Open target AI in a new tab and auto-paste the conversation">
+            ${svg("transfer", 13)}
+            Send
+          </button>
+        </div>
         <div class="tp-transfer-status" id="tp-transfer-status"></div>
       </div>
     </div>
@@ -443,6 +458,8 @@ function bindUIEvents() {
   $("tp-export-csv").addEventListener("click", () => exportHistory("csv"));
   $("tp-export-json").addEventListener("click", () => exportHistory("json"));
   $("tp-transfer-btn").addEventListener("click", transferChat);
+  const sendBtn = $("tp-send-btn");
+  if (sendBtn) sendBtn.addEventListener("click", sendChatToTarget);
 }
 
 // ── Tab switching ────────────────────────────────────────────
@@ -591,7 +608,53 @@ function renderHistory() {
   });
 }
 
-// ── Transfer chat ────────────────────────────────────────────
+// ── Transfer payload builder (shared by download + send-to-AI) ──
+function buildTransferMarkdown(messages) {
+  const host    = detectedPlatform || window.location.hostname;
+  const aiName  = detectedModel || "AI";
+  const date    = new Date().toLocaleString();
+  const safeName = host.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
+
+  const frontmatter =
+    "---\ntitle: TokenPilot Chat Transfer\nplatform: " + host +
+    "\nmodel: " + aiName + "\nexported: " + date +
+    "\nmessages: " + messages.length + "\n---\n\n";
+
+  const instructions =
+    "> **Instructions for the receiving AI**\n" +
+    "> This conversation was originally held with **" + aiName + "** on `" + host + "`.\n" +
+    "> Read every message carefully, absorb all context, then continue as the AI assistant.\n" +
+    "> Start your reply with a one-line recap of what was discussed.\n\n---\n\n## Conversation Transcript\n\n";
+
+  let body = "";
+  messages.forEach((m, i) => {
+    const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
+    body += (i > 0 ? "\n---\n\n" : "") + heading + "\n\n";
+    if (m.text) body += m.text + "\n\n";
+    if (m.images && m.images.length > 0) {
+      m.images.forEach(desc => {
+        const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
+        body += "[" + prefix + ": " + desc + "]\n\n";
+      });
+    }
+  });
+
+  const footer = "\n---\n\n## ▶ Continue from here\n\n_Paste your next message below after uploading this file to a new chat._\n";
+  return { content: frontmatter + instructions + body + footer, host, safeName, aiName };
+}
+
+// ── Target AI registry (mirror of popup.js TARGETS) ──────────
+const TP_TARGETS = {
+  chatgpt:    { name: "ChatGPT",    url: "https://chatgpt.com/" },
+  claude:     { name: "Claude",     url: "https://claude.ai/new" },
+  gemini:     { name: "Gemini",     url: "https://gemini.google.com/app" },
+  aistudio:   { name: "AI Studio",  url: "https://aistudio.google.com/prompts/new_chat" },
+  perplexity: { name: "Perplexity", url: "https://www.perplexity.ai/" },
+  mistral:    { name: "Mistral",    url: "https://chat.mistral.ai/chat" },
+  deepseek:   { name: "DeepSeek",   url: "https://chat.deepseek.com/" }
+};
+
+// ── Transfer chat (download .md) ─────────────────────────────
 function transferChat() {
   const btn = document.getElementById("tp-transfer-btn");
   const statusEl = document.getElementById("tp-transfer-status");
@@ -611,37 +674,7 @@ function transferChat() {
       return;
     }
 
-    const host    = detectedPlatform || window.location.hostname;
-    const aiName  = detectedModel || "AI";
-    const date    = new Date().toLocaleString();
-    const safeName = host.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
-
-    const frontmatter =
-      "---\ntitle: TokenPilot Chat Transfer\nplatform: " + host +
-      "\nmodel: " + aiName + "\nexported: " + date +
-      "\nmessages: " + messages.length + "\n---\n\n";
-
-    const instructions =
-      "> **Instructions for the receiving AI**\n" +
-      "> This conversation was originally held with **" + aiName + "** on `" + host + "`.\n" +
-      "> Read every message carefully, absorb all context, then continue as the AI assistant.\n" +
-      "> Start your reply with a one-line recap of what was discussed.\n\n---\n\n## Conversation Transcript\n\n";
-
-    let body = "";
-    messages.forEach((m, i) => {
-      const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
-      body += (i > 0 ? "\n---\n\n" : "") + heading + "\n\n";
-      if (m.text) body += m.text + "\n\n";
-      if (m.images && m.images.length > 0) {
-        m.images.forEach(desc => {
-          const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
-          body += "[" + prefix + ": " + desc + "]\n\n";
-        });
-      }
-    });
-
-    const footer = "\n---\n\n## ▶ Continue from here\n\n_Paste your next message below after uploading this file to a new chat._\n";
-    const content = frontmatter + instructions + body + footer;
+    const { content, safeName } = buildTransferMarkdown(messages);
 
     const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -657,6 +690,70 @@ function transferChat() {
     if (btn) btn.disabled = false;
     console.warn("[TokenPilot] transferChat error:", e);
     setMsg("Export failed. Try reloading the page.", "err");
+  });
+}
+
+// ── Send chat to another AI (auto-paste into new tab) ────────
+function sendChatToTarget() {
+  const btn       = document.getElementById("tp-send-btn");
+  const selectEl  = document.getElementById("tp-target-select");
+  const statusEl  = document.getElementById("tp-transfer-status");
+  const targetKey = selectEl ? selectEl.value : "chatgpt";
+  const target    = TP_TARGETS[targetKey];
+
+  const setMsg = (msg, cls) => {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.className = "tp-transfer-status" + (cls ? " " + cls : "");
+  };
+
+  if (!target) { setMsg("Unknown target.", "err"); return; }
+
+  if (btn) btn.disabled = true;
+  setMsg("Capturing conversation…");
+
+  scrapeConversationAsync().then(messages => {
+    if (!messages || messages.length === 0) {
+      if (btn) btn.disabled = false;
+      setMsg("No conversation found on this page.", "err");
+      return;
+    }
+
+    const { content } = buildTransferMarkdown(messages);
+
+    const payload = {
+      target:     targetKey,
+      content:    content,
+      autoSubmit: true,
+      createdAt:  Date.now()
+    };
+
+    setMsg("Opening " + target.name + "…");
+
+    chrome.storage.local.set({ tp_pending_paste: payload }, () => {
+      if (chrome.runtime.lastError) {
+        if (btn) btn.disabled = false;
+        setMsg("Failed to stage payload.", "err");
+        return;
+      }
+      // Service worker opens the tab — content scripts can't call chrome.tabs.create.
+      chrome.runtime.sendMessage(
+        { type: "OPEN_TARGET_TAB", url: target.url },
+        (res) => {
+          if (btn) btn.disabled = false;
+          if (chrome.runtime.lastError || !res || !res.ok) {
+            setMsg("Couldn't open new tab. Check extension permissions.", "err");
+            return;
+          }
+          setMsg("✓ " + messages.length + " msgs · sent to " + target.name, "ok");
+          setTimeout(() => setMsg(""), 6000);
+        }
+      );
+    });
+  }).catch(e => {
+    if (btn) btn.disabled = false;
+    console.warn("[TokenPilot] sendChatToTarget error:", e);
+    setMsg("Send failed. Try reloading the page.", "err");
   });
 }
 
