@@ -15,33 +15,48 @@
     text.textContent = isEnabled ? "ACTIVE" : "DISABLED";
   }
 
-  // ── Token estimator ───────────────────────────────────────────
-  function estimateTokens(text) {
-    if (!text || !text.trim()) return 0;
-    const words        = text.trim().split(/\s+/).length;
-    const specialChars = (text.match(/[^\w\s]/g) || []).length;
-    return Math.ceil((words + specialChars * 0.5) * 1.3);
-  }
+  // ── Token estimator: uses estimateTokens from utils/tokenCounter.js
+  //    (loaded by popup.html before this script).
   function fmtTokens(n) {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
     if (n >= 1_000)     return (n / 1_000).toFixed(1) + "K";
     return n.toLocaleString();
   }
 
+  // ── YAML scalar escape (quoted, double-quote + backslash safe) ──
+  function yamlEscape(v) {
+    const s = String(v == null ? "" : v);
+    return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+  }
+
+  // ── Smart truncate: word-boundary cut, ellipsis only when actually cut ──
+  function smartTruncate(text, max) {
+    const s = String(text == null ? "" : text).trim();
+    if (s.length <= max) return s;
+    const cut = s.slice(0, max);
+    const lastSpace = cut.lastIndexOf(" ");
+    const trimmed = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+    return trimmed.trimEnd() + "…";
+  }
+
   // ── Build Markdown file with embedded images ──────────────────
   function buildMarkdown(messages, aiName, host, date) {
 
-    const firstUser = messages.find(m => m.role === "You");
-    const lastAI    = [...messages].reverse().find(m => m.role !== "You");
-    const origAsk   = firstUser ? firstUser.text.split("\n")[0].slice(0, 150) : "See transcript below";
-    const lastLeft  = lastAI    ? lastAI.text.split("\n")[0].slice(0, 150)    : "See transcript below";
+    const isoDate = new Date().toISOString();
+
+    const firstUser   = messages.find(m => m.role === "You");
+    const lastAI      = [...messages].reverse().find(m => m.role !== "You");
+    const firstLine   = (t) => String(t || "").split("\n").find(l => l.trim()) || "";
+    const origAsk     = firstUser ? smartTruncate(firstLine(firstUser.text), 150) : "See transcript below";
+    const lastLeft    = lastAI    ? smartTruncate(firstLine(lastAI.text),    150) : "See transcript below";
 
     const frontmatter =
       "---\n" +
-      "title: TokenPilot Chat Transfer\n" +
-      "platform: " + host + "\n" +
-      "model: " + aiName + "\n" +
-      "exported: " + date + "\n" +
+      "title: " + yamlEscape("TokenPilot Chat Transfer") + "\n" +
+      "platform: " + yamlEscape(host) + "\n" +
+      "model: " + yamlEscape(aiName) + "\n" +
+      "exported: " + yamlEscape(isoDate) + "\n" +
+      "exported_human: " + yamlEscape(date) + "\n" +
       "messages: " + messages.length + "\n" +
       "---\n\n";
 
@@ -53,7 +68,7 @@
       "**Original ask:**\n" +
       "> " + origAsk + "\n\n" +
       "**Where the previous assistant left off:**\n" +
-      "> " + lastLeft + "…\n\n" +
+      "> " + lastLeft + "\n\n" +
       "---\n\n";
 
     const instructions =
@@ -65,21 +80,28 @@
       "\n---\n\n## Conversation Transcript\n\n";
 
     let body = "";
-    let imgIndex = 1;
+    let imgCount = 0;
 
     for (let i = 0; i < messages.length; i++) {
       const m       = messages[i];
-      const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
-      const divider = i > 0 ? "\n---\n\n" : "";
+      const n       = i + 1;
+      const heading = m.role === "You"
+        ? "### " + n + ". You"
+        : "### " + n + ". Assistant (" + aiName + ")";
+      const divider = i > 0 ? "\n<hr class=\"tp-msg-break\"/>\n\n" : "";
 
       body += divider + heading + "\n\n";
-      if (m.text) body += m.text + "\n\n";
+      if (m.text) {
+        // Escape leading "---" lines so user text can't collide with MD
+        // horizontal-rule / YAML-block parsing in the transcript.
+        body += m.text.replace(/^---(?=\s|$)/gm, "\\---") + "\n\n";
+      }
 
       if (m.images && m.images.length > 0) {
         for (const desc of m.images) {
           const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
           body += "[" + prefix + ": " + desc + "]\n\n";
-          imgIndex++;
+          imgCount++;
         }
       }
     }
@@ -94,15 +116,19 @@
       "_Paste your next message below after uploading this file to a new chat._\n\n" +
       "---\n\n" +
       "<!-- TokenPilot Transfer Metadata\n" +
-      "     etm: " + fmtTok + " tokens used by this file\n" +
-      "     exact: " + tokenEstimate + " tokens (estimated, cl100k_base)\n" +
-      "     messages: " + messages.length + "\n" +
-      "     images: " + (imgIndex - 1) + " embedded\n" +
-      "     model: " + aiName + "\n" +
-      "     exported: " + date + "\n" +
+      "     tokens_pretty: " + fmtTok + "\n" +
+      "     tokens_exact: " + tokenEstimate + " (heuristic estimate, ~cl100k-calibrated)\n" +
+      "     images_referenced: " + imgCount + "\n" +
       "-->\n";
 
-    return { content: contentSoFar + footer, fmtTok, tokenEstimate, imgCount: imgIndex - 1 };
+    return { content: contentSoFar + footer, fmtTok, tokenEstimate, imgCount };
+  }
+
+  // ── Human-readable filename timestamp: 2026-06-20-1542 ───────
+  function fmtFilenameStamp(d = new Date()) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+           "-" + pad(d.getHours()) + pad(d.getMinutes());
   }
 
   // ── Download the .md file ─────────────────────────────────────
@@ -112,7 +138,7 @@
     const a        = document.createElement("a");
     const safeName = host.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
     a.href         = url;
-    a.download     = "tokenpilot-transfer-" + safeName + "-" + Date.now() + ".md";
+    a.download     = "tokenpilot-transfer-" + safeName + "-" + fmtFilenameStamp() + ".md";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

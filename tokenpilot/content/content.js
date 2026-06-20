@@ -6,11 +6,33 @@
 
 console.log("[TokenPilot] v3.3 loaded");
 
+// ── Extension context guard (MV3 reload invalidation) ────────
+// When the extension is reloaded/updated, this content script becomes
+// "orphaned": chrome.runtime.id throws, sendResponse fails. These helpers
+// let calls bail out cleanly instead of throwing "Extension context invalidated".
+function isExtAlive() {
+  try { return !!(chrome && chrome.runtime && chrome.runtime.id); }
+  catch { return false; }
+}
+function safeSendResponse(sendResponse, payload) {
+  try { sendResponse(payload); } catch (_) { /* port closed — orphaned script */ }
+}
+let tpOrphaned = false;
+function markOrphanedAndCleanup() {
+  if (tpOrphaned) return;
+  tpOrphaned = true;
+  try { aihObserver?.disconnect(); } catch (_) {}
+  try { clearInterval(aihInterval); } catch (_) {}
+  try { document.getElementById("tp-box")?.remove(); } catch (_) {}
+  try { document.getElementById("tp-fab")?.remove(); } catch (_) {}
+}
+
 // ── Constants ────────────────────────────────────────────────
 const HISTORY_KEY  = "tp_prompt_history";
 const THEME_KEY    = "tp_theme";
 const TAB_KEY      = "tp_tab";
 const CORNER_KEY   = "tp_corner";
+const FAB_POS_KEY  = "tp_fab_pos";        // free-form FAB drop position {x,y}
 const COLLAPSED_KEY = "tp_collapsed";
 const MAX_HISTORY  = 50;
 const VALID_CORNERS = ["br", "bl", "tr", "tl"];
@@ -23,6 +45,15 @@ let detectedModelKey = "gpt-4o";
 let currentInput     = null;
 let isCollapsed      = localStorage.getItem(COLLAPSED_KEY) === "1";
 let currentCorner    = VALID_CORNERS.includes(localStorage.getItem(CORNER_KEY)) ? localStorage.getItem(CORNER_KEY) : "br";
+let fabFreePos       = (function readFabPos() {
+  try {
+    const raw = localStorage.getItem(FAB_POS_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw);
+    if (typeof p?.x !== "number" || typeof p?.y !== "number") return null;
+    return p;
+  } catch { return null; }
+})();
 let lastKnownPrompt  = "";
 let currentTab       = (localStorage.getItem(TAB_KEY) === "compare" ? "tokens" : localStorage.getItem(TAB_KEY)) || "tokens";
 let currentTheme     = localStorage.getItem(THEME_KEY) || "dark";
@@ -135,7 +166,11 @@ function saveToHistory(text) {
     history = history.slice(0, MAX_HISTORY);
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
     const tokens = estimateTokens(text);
-    chrome.runtime.sendMessage({ type: "PROMPT_SUBMITTED", tokens }).catch(() => {});
+    if (isExtAlive()) {
+      try {
+        chrome.runtime.sendMessage({ type: "PROMPT_SUBMITTED", tokens }).catch(() => {});
+      } catch (_) { markOrphanedAndCleanup(); }
+    }
   } catch (e) { console.warn("[TokenPilot] saveToHistory error:", e); }
 }
 function getHistory() {
@@ -206,6 +241,8 @@ function applyCorner(corner) {
   const fab = document.getElementById("tp-fab");
   [box, fab].forEach(el => {
     if (!el) return;
+    // FAB owns a free-form drop position when set — don't override with corner.
+    if (el === fab && fabFreePos) return;
     el.classList.remove("tp-corner-br", "tp-corner-bl", "tp-corner-tr", "tp-corner-tl");
     el.classList.add(`tp-corner-${corner}`);
   });
@@ -218,11 +255,59 @@ function nearestCorner(x, y) {
   return (isTop ? "t" : "b") + (isLeft ? "l" : "r");
 }
 
+// ── Drag backdrop (blurred overlay shown while user repositions FAB) ──
+function showDragBackdrop() {
+  let bd = document.getElementById("tp-drag-backdrop");
+  if (!bd) {
+    bd = document.createElement("div");
+    bd.id = "tp-drag-backdrop";
+    if (currentTheme === "light") bd.classList.add("tp-light");
+    document.body.appendChild(bd);
+    // next frame → trigger fade-in
+    requestAnimationFrame(() => bd.classList.add("is-visible"));
+  } else {
+    bd.classList.add("is-visible");
+  }
+}
+function hideDragBackdrop() {
+  const bd = document.getElementById("tp-drag-backdrop");
+  if (!bd) return;
+  bd.classList.remove("is-visible");
+  setTimeout(() => bd.remove(), 220); // match CSS transition
+}
+
+// Apply a saved free position to FAB (clamped to viewport).
+function applyFabFreePos(fab, pos) {
+  if (!fab || !pos) return;
+  const w = fab.offsetWidth || 44, h = fab.offsetHeight || 44;
+  const x = Math.max(8, Math.min(window.innerWidth  - w - 8, pos.x));
+  const y = Math.max(8, Math.min(window.innerHeight - h - 8, pos.y));
+  fab.classList.remove("tp-corner-br", "tp-corner-bl", "tp-corner-tr", "tp-corner-tl");
+  fab.style.left   = x + "px";
+  fab.style.top    = y + "px";
+  fab.style.right  = "auto";
+  fab.style.bottom = "auto";
+}
+
+// Keep FAB inside viewport when the window is resized.
+window.addEventListener("resize", () => {
+  if (!fabFreePos) return;
+  const fab = document.getElementById("tp-fab");
+  if (fab) applyFabFreePos(fab, fabFreePos);
+});
+
 function setCollapsed(collapsed) {
   isCollapsed = collapsed;
   localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
   const box = document.getElementById("tp-box");
   const fab = document.getElementById("tp-fab");
+  // When expanding, anchor box to the corner nearest the FAB so it opens
+  // on the same side the user dragged the FAB to.
+  if (!collapsed && fab && fabFreePos) {
+    const r = fab.getBoundingClientRect();
+    const corner = nearestCorner(r.left + r.width / 2, r.top + r.height / 2);
+    applyCorner(corner);
+  }
   if (box) box.style.display = collapsed ? "none" : "";
   if (fab) fab.style.display = collapsed ? "inline-flex" : "none";
 }
@@ -237,6 +322,8 @@ function createFAB() {
   fab.innerHTML = `<span class="tp-fab-icon">${svg("flash", 18)}</span>`;
   if (currentTheme === "light") fab.classList.add("tp-light");
   document.body.appendChild(fab);
+  // Restore saved free-form drop position (overrides corner anchor).
+  if (fabFreePos) applyFabFreePos(fab, fabFreePos);
   attachFabDrag(fab);
 
   fab.addEventListener("click", e => {
@@ -263,13 +350,17 @@ function attachFabDrag(fab) {
     fab.setPointerCapture?.(pointerId);
     fab.classList.add("is-dragging");
     fab.style.transition = "none";
+    // Backdrop appears only once the pointer actually moves (see onMove).
   };
 
   const onMove = e => {
     if (!dragging) return;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
-    if (!moved && Math.hypot(dx, dy) > 4) moved = true;
+    if (!moved && Math.hypot(dx, dy) > 4) {
+      moved = true;
+      showDragBackdrop();
+    }
     if (!moved) return;
     const w = fab.offsetWidth, h = fab.offsetHeight;
     const x = Math.max(8, Math.min(window.innerWidth  - w - 8, originX + dx));
@@ -289,10 +380,12 @@ function attachFabDrag(fab) {
     fab.style.transition = "";
     if (moved) {
       fab.dataset.dragged = "1";
+      hideDragBackdrop();
+      // Free-form drop: keep FAB exactly where released, save position.
       const r = fab.getBoundingClientRect();
-      const corner = nearestCorner(r.left + r.width / 2, r.top + r.height / 2);
-      fab.style.left = fab.style.top = fab.style.right = fab.style.bottom = "";
-      applyCorner(corner);
+      const pos = { x: r.left, y: r.top };
+      fabFreePos = pos;
+      try { localStorage.setItem(FAB_POS_KEY, JSON.stringify(pos)); } catch (_) {}
     }
   };
 
@@ -608,17 +701,37 @@ function renderHistory() {
   });
 }
 
+// ── YAML scalar escape (quoted, double-quote + backslash safe) ──
+function tpYamlEscape(v) {
+  const s = String(v == null ? "" : v);
+  return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+// ── Human-readable filename timestamp: 2026-06-20-1542 ───────
+function tpFmtFilenameStamp(d) {
+  d = d || new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+         "-" + pad(d.getHours()) + pad(d.getMinutes());
+}
+
 // ── Transfer payload builder (shared by download + send-to-AI) ──
 function buildTransferMarkdown(messages) {
   const host    = detectedPlatform || window.location.hostname;
   const aiName  = detectedModel || "AI";
   const date    = new Date().toLocaleString();
+  const isoDate = new Date().toISOString();
   const safeName = host.replace(/[^a-z0-9]/gi, "-").toLowerCase().slice(0, 30);
 
   const frontmatter =
-    "---\ntitle: TokenPilot Chat Transfer\nplatform: " + host +
-    "\nmodel: " + aiName + "\nexported: " + date +
-    "\nmessages: " + messages.length + "\n---\n\n";
+    "---\n" +
+    "title: " + tpYamlEscape("TokenPilot Chat Transfer") + "\n" +
+    "platform: " + tpYamlEscape(host) + "\n" +
+    "model: " + tpYamlEscape(aiName) + "\n" +
+    "exported: " + tpYamlEscape(isoDate) + "\n" +
+    "exported_human: " + tpYamlEscape(date) + "\n" +
+    "messages: " + messages.length + "\n" +
+    "---\n\n";
 
   const instructions =
     "> **Instructions for the receiving AI**\n" +
@@ -628,9 +741,16 @@ function buildTransferMarkdown(messages) {
 
   let body = "";
   messages.forEach((m, i) => {
-    const heading = m.role === "You" ? "### 🧑 You" : "### 🤖 " + aiName;
-    body += (i > 0 ? "\n---\n\n" : "") + heading + "\n\n";
-    if (m.text) body += m.text + "\n\n";
+    const n       = i + 1;
+    const heading = m.role === "You"
+      ? "### " + n + ". You"
+      : "### " + n + ". Assistant (" + aiName + ")";
+    body += (i > 0 ? "\n<hr class=\"tp-msg-break\"/>\n\n" : "") + heading + "\n\n";
+    if (m.text) {
+      // Escape leading "---" lines to prevent MD horizontal-rule / YAML
+      // collision inside the transcript.
+      body += m.text.replace(/^---(?=\s|$)/gm, "\\---") + "\n\n";
+    }
     if (m.images && m.images.length > 0) {
       m.images.forEach(desc => {
         const prefix = m.role === "You" ? "User uploaded" : "AI generated image";
@@ -680,7 +800,7 @@ function transferChat() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "tokenpilot-transfer-" + safeName + "-" + Date.now() + ".md";
+    a.download = "tokenpilot-transfer-" + safeName + "-" + tpFmtFilenameStamp() + ".md";
     a.click();
     URL.revokeObjectURL(url);
 
@@ -730,26 +850,44 @@ function sendChatToTarget() {
 
     setMsg("Opening " + target.name + "…");
 
-    chrome.storage.local.set({ tp_pending_paste: payload }, () => {
-      if (chrome.runtime.lastError) {
-        if (btn) btn.disabled = false;
-        setMsg("Failed to stage payload.", "err");
-        return;
-      }
-      // Service worker opens the tab — content scripts can't call chrome.tabs.create.
-      chrome.runtime.sendMessage(
-        { type: "OPEN_TARGET_TAB", url: target.url },
-        (res) => {
+    if (!isExtAlive()) {
+      if (btn) btn.disabled = false;
+      setMsg("Extension reloaded — refresh this page and try again.", "err");
+      markOrphanedAndCleanup();
+      return;
+    }
+    try {
+      chrome.storage.local.set({ tp_pending_paste: payload }, () => {
+        if (chrome.runtime.lastError) {
           if (btn) btn.disabled = false;
-          if (chrome.runtime.lastError || !res || !res.ok) {
-            setMsg("Couldn't open new tab. Check extension permissions.", "err");
-            return;
-          }
-          setMsg("✓ " + messages.length + " msgs · sent to " + target.name, "ok");
-          setTimeout(() => setMsg(""), 6000);
+          setMsg("Failed to stage payload.", "err");
+          return;
         }
-      );
-    });
+        // Service worker opens the tab — content scripts can't call chrome.tabs.create.
+        try {
+          chrome.runtime.sendMessage(
+            { type: "OPEN_TARGET_TAB", url: target.url },
+            (res) => {
+              if (btn) btn.disabled = false;
+              if (chrome.runtime.lastError || !res || !res.ok) {
+                setMsg("Couldn't open new tab. Check extension permissions.", "err");
+                return;
+              }
+              setMsg("✓ " + messages.length + " msgs · sent to " + target.name, "ok");
+              setTimeout(() => setMsg(""), 6000);
+            }
+          );
+        } catch (_) {
+          if (btn) btn.disabled = false;
+          setMsg("Extension reloaded — refresh this page and try again.", "err");
+          markOrphanedAndCleanup();
+        }
+      });
+    } catch (_) {
+      if (btn) btn.disabled = false;
+      setMsg("Extension reloaded — refresh this page and try again.", "err");
+      markOrphanedAndCleanup();
+    }
   }).catch(e => {
     if (btn) btn.disabled = false;
     console.warn("[TokenPilot] sendChatToTarget error:", e);
@@ -855,24 +993,31 @@ document.addEventListener("mousedown", e => {
 // of { role: "You" | "AI", text: string, images: string[] } objects.
 
 // ── Collect image descriptions from a message element ────────
-// Returns array of human-readable descriptions instead of base64 URLs.
+// Returns array of human-readable descriptions (deduped by src) instead of base64 URLs.
 function collectImagesFromEl(el) {
   const imgs   = el.querySelectorAll("img");
   const result = [];
+  const seen   = new Set();
   for (const img of imgs) {
     if ((img.naturalWidth || img.width || 99) < 40) continue;
     if (img.closest("[class*='avatar'], [class*='Avatar'], [class*='logo']")) continue;
+    const src = img.currentSrc || img.src || "";
     const alt = img.alt?.trim() || "";
     let desc  = alt;
     if (!desc) {
       try {
-        const src      = img.currentSrc || img.src || "";
         const filename = new URL(src, window.location.href).pathname
           .split("/").pop().replace(/[?#].*$/, "");
         if (filename) desc = filename;
       } catch {}
     }
-    result.push(desc || "image");
+    desc = desc || "image";
+    // Dedupe by src when available (thumbnail + full-size share src in many UIs),
+    // otherwise fall back to desc.
+    const sig = src || desc;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    result.push(desc);
   }
   return result; // array of description strings (no base64)
 }
@@ -1307,16 +1452,17 @@ async function scrapeConversationAsync() {
 
 // ── Message listener: SCRAPE_CONVERSATION (async) ────────────
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
   if (request.type === "SCRAPE_CONVERSATION") {
     scrapeConversationAsync().then(messages => {
-      sendResponse({
+      safeSendResponse(sendResponse, {
         messages,
         platform: window.location.hostname,
         model:    detectedModel || "Unknown",
       });
     }).catch(e => {
       console.warn("[TokenPilot] scrape failed:", e);
-      sendResponse({ messages: [], platform: window.location.hostname, model: "Unknown" });
+      safeSendResponse(sendResponse, { messages: [], platform: window.location.hostname, model: "Unknown" });
     });
     return true; // keep channel open for async
   }
@@ -1333,11 +1479,19 @@ function removeUI() {
 function startObserver() {
   aihObserver?.disconnect();
   aihObserver = new MutationObserver(() => {
+    if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
     const input = findPromptInput();
     if (input && !input.dataset.tpAttached) {
-      chrome.storage.local.get(["isEnabled"], ({ isEnabled }) => {
-        if (isEnabled !== false) { createUI(); attachInputListener(input); }
-      });
+      try {
+        chrome.storage.local.get(["isEnabled"], ({ isEnabled }) => {
+          if (chrome.runtime.lastError) return;
+          if (isEnabled !== false) {
+            // UI may already exist (created in init); ensure it's there before binding input.
+            if (!document.getElementById("tp-box")) createUI();
+            attachInputListener(input);
+          }
+        });
+      } catch (_) { markOrphanedAndCleanup(); }
     }
   });
   aihObserver.observe(document.body, { childList: true, subtree: true });
@@ -1345,19 +1499,25 @@ function startObserver() {
 function init() {
   chrome.storage.local.get(["isEnabled"], ({ isEnabled }) => {
     if (isEnabled === false) return;
+    // Show the FAB + panel immediately — don't wait for a prompt input.
+    // Input attachment (for token counting) happens separately below.
+    if (!document.getElementById("tp-box")) createUI();
+    // Start the observer first so any later input attaches automatically.
+    startObserver();
+    // Best-effort: try to attach to an input right now; if not present yet,
+    // a short poll covers SPA hydration, after which the observer handles the rest.
     clearInterval(aihInterval);
     let retries = 0;
     const tryAttach = () => {
       const input = findPromptInput();
-      if (input) { createUI(); attachInputListener(input); startObserver(); return true; }
-      return false;
+      if (input && !input.dataset.tpAttached) { attachInputListener(input); return true; }
+      return !!(input && input.dataset.tpAttached);
     };
     if (tryAttach()) return;
     aihInterval = setInterval(() => {
       retries++;
-      if (tryAttach() || retries >= 100) {
+      if (tryAttach() || retries >= 60) {
         clearInterval(aihInterval); aihInterval = null;
-        if (retries >= 100) startObserver();
       }
     }, 500);
   });
