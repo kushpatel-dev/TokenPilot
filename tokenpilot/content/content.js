@@ -1,10 +1,6 @@
-// ============================================================
-//  TokenPilot v3.3 — Content Script (redesigned UI)
-//  Vanilla JS. Deps injected via manifest: data/models.js, utils/tokenCounter.js
-// ============================================================
 "use strict";
 
-console.log("[TokenPilot] v3.3 loaded");
+console.log("[TokenPilot] v3.5 loaded");
 
 // ── Extension context guard (MV3 reload invalidation) ────────
 // When the extension is reloaded/updated, this content script becomes
@@ -39,9 +35,7 @@ const VALID_CORNERS = ["br", "bl", "tr", "tl"];
 
 // ── State ────────────────────────────────────────────────────
 let detectedModel    = null;
-let detectedLimit    = DEFAULT_LIMIT;
 let detectedPlatform = "";
-let detectedModelKey = "gpt-4o";
 let currentInput     = null;
 let isCollapsed      = localStorage.getItem(COLLAPSED_KEY) === "1";
 let currentCorner    = VALID_CORNERS.includes(localStorage.getItem(CORNER_KEY)) ? localStorage.getItem(CORNER_KEY) : "br";
@@ -56,12 +50,33 @@ let fabFreePos       = (function readFabPos() {
 })();
 let lastKnownPrompt  = "";
 let currentTab       = (localStorage.getItem(TAB_KEY) === "compare" ? "tokens" : localStorage.getItem(TAB_KEY)) || "tokens";
-let currentTheme     = localStorage.getItem(THEME_KEY) || "dark";
+let themePref        = (function readThemePref() {
+  // One-time migration: old builds stored explicit "dark"/"light" as default.
+  // Force auto for anyone who hasn't touched the toggle in this build.
+  const MIGRATE_KEY = "tp_theme_v";
+  if (localStorage.getItem(MIGRATE_KEY) !== "2") {
+    localStorage.setItem(THEME_KEY, "auto");
+    localStorage.setItem(MIGRATE_KEY, "2");
+    return "auto";
+  }
+  const raw = localStorage.getItem(THEME_KEY);
+  return (raw === "light" || raw === "dark" || raw === "auto") ? raw : "auto";
+})();
+let systemPrefersDark = (function readSystem() {
+  try { return window.matchMedia("(prefers-color-scheme: dark)").matches; }
+  catch { return true; }
+})();
+function resolveTheme() {
+  return themePref === "auto" ? (systemPrefersDark ? "dark" : "light") : themePref;
+}
+let currentTheme     = resolveTheme();
 let searchQuery      = "";
 let aihObserver      = null;
 let aihInterval      = null;
-let flashTimer       = null;
 let toastTimer       = null;
+let lastTokenBaseline = 0;
+let deltaBaselineInit = false;
+let deltaResetTimer  = null;
 
 // ── SVG icon helper ─────────────────────────────────────────
 const ICONS = {
@@ -70,6 +85,11 @@ const ICONS = {
   plus:    `<path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
   sun:     `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></g>`,
   moon:    `<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>`,
+  auto:    `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></g>`,
+  spark:   `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.5"/></g>`,
+  save:    `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></g>`,
+  arrow_up:`<path d="M12 19V5M5 12l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
+  arrow_dn:`<path d="M12 5v14M19 12l-7 7-7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`,
   copy:    `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></g>`,
   restore: `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></g>`,
   trash:   `<g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></g>`,
@@ -83,6 +103,98 @@ const ICONS = {
 };
 function svg(name, size = 14) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24">${ICONS[name] || ""}</svg>`;
+}
+
+// ── Theme application (auto / light / dark) ─────────────────
+function applyTheme() {
+  currentTheme = resolveTheme();
+  const box = document.getElementById("tp-box");
+  const fab = document.getElementById("tp-fab");
+  const bd  = document.getElementById("tp-drag-backdrop");
+  [box, fab, bd].forEach(el => {
+    if (!el) return;
+    el.classList.toggle("tp-light", currentTheme === "light");
+  });
+  const btn = document.getElementById("tp-theme-btn");
+  if (btn) {
+    const icon = themePref === "auto" ? "auto" : themePref === "light" ? "sun" : "moon";
+    btn.innerHTML = svg(icon, 14);
+    btn.title = "Theme: " + themePref + (themePref === "auto" ? " (system: " + currentTheme + ")" : "");
+  }
+}
+try {
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  const handler = (e) => {
+    systemPrefersDark = e.matches;
+    if (themePref === "auto") applyTheme();
+  };
+  if (mq.addEventListener) mq.addEventListener("change", handler);
+  else if (mq.addListener) mq.addListener(handler);
+} catch (_) {}
+
+// ── Prompt dimension analysis (Clarity / Specificity / Structure) ──
+function dimensionLabel(n) {
+  if (n >= 5) return { text: "Excellent", color: "#a855f7" };
+  if (n >= 4) return { text: "Strong",    color: "#6366f1" };
+  if (n >= 3) return { text: "Good",      color: "#22d3ee" };
+  if (n >= 2) return { text: "Weak",      color: "#fbbf24" };
+  return       { text: "Poor",      color: "#f87171" };
+}
+function analyzeDimensions(text) {
+  const lower = text.toLowerCase();
+  const words = text.trim().split(/\s+/);
+  const wc = words.length;
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const avgWPS = sentences.length ? wc / sentences.length : wc;
+  const longWords = words.filter(w => w.length > 8).length;
+  const complexRatio = longWords / (wc || 1);
+
+  let clarity = 5;
+  if (avgWPS > 25 || complexRatio > 0.35) clarity = 2;
+  else if (avgWPS > 15 || complexRatio > 0.25) clarity = 3;
+  else if (avgWPS > 10) clarity = 4;
+
+  let spec = 0;
+  if (/(as a|act as|you are|persona|expert|specialist)/.test(lower)) spec++;
+  if (/(step by step|detailed|context|background|explain)/.test(lower)) spec++;
+  if (/(example|sample|for instance|such as|like this)/.test(lower)) spec++;
+  if (/\d/.test(text)) spec++;
+  if (wc > 30) spec++;
+  spec = Math.min(5, spec);
+
+  let struct = 0;
+  if (/(bullet|list|table|markdown|json|xml|format|paragraph)/.test(lower)) struct++;
+  if (/^\s*(?:[-*]|\d+\.)\s/m.test(text)) struct++;
+  if (/```|"""|'''|:\s*$/m.test(text)) struct++;
+  if (sentences.length >= 3) struct++;
+  if (/\n/.test(text)) struct++;
+  struct = Math.min(5, struct);
+
+  return {
+    clarity:     { score: clarity, label: dimensionLabel(clarity) },
+    specificity: { score: spec,    label: dimensionLabel(spec) },
+    structure:   { score: struct,  label: dimensionLabel(struct) },
+  };
+}
+function buildSuggestions(text, dims) {
+  const lower = text.toLowerCase();
+  const out = [];
+  if (dims.specificity.score < 3) {
+    if (!/(as a|act as|you are|persona|expert)/.test(lower))
+      out.push("Assign a role (e.g. \"Act as a senior engineer\")");
+    if (!/(example|sample|for instance|such as)/.test(lower))
+      out.push("Add an example of desired output");
+  }
+  if (dims.structure.score < 3 && !/(bullet|list|table|markdown|json|format)/.test(lower)) {
+    out.push("Specify output format (bullets, JSON, table)");
+  }
+  if (dims.clarity.score < 3) {
+    out.push("Shorten long sentences for clarity");
+  }
+  if (!/[.?!]/.test(text) && text.trim().length > 40) {
+    out.push("End with a clear question or task");
+  }
+  return out.slice(0, 3);
 }
 
 // ── Model Detection (unchanged) ──────────────────────────────
@@ -143,18 +255,24 @@ function detectModel() {
       const el = document.querySelector('mat-select, [class*="model"], button[aria-label*="model"]');
       if (el) modelText = el.textContent.trim().toLowerCase();
     }
-    for (const [key, val] of Object.entries(MODEL_DB)) {
+    const registry = (window.TP_REGISTRY && window.TP_REGISTRY.models) || MODEL_DB;
+    for (const [key, val] of Object.entries(registry)) {
       if (modelText.includes(key)) {
         detectedModel = val.name;
-        detectedLimit = val.limit;
-        detectedModelKey = key;
         return;
       }
     }
     detectedModel = modelText || "Unknown";
-    detectedLimit = DEFAULT_LIMIT;
   } catch (e) { console.warn("[TokenPilot] detectModel error:", e); }
 }
+
+// Re-detect when remote MODEL_DB updates (covers new model launches).
+try {
+  window.TP_REGISTRY?.onUpdate?.(() => {
+    detectModel();
+    try { updateTokenDisplay(); } catch (_) {}
+  });
+} catch (_) {}
 
 // ── History helpers ──────────────────────────────────────────
 function saveToHistory(text) {
@@ -261,7 +379,7 @@ function showDragBackdrop() {
   if (!bd) {
     bd = document.createElement("div");
     bd.id = "tp-drag-backdrop";
-    if (currentTheme === "light") bd.classList.add("tp-light");
+    if (resolveTheme() === "light") bd.classList.add("tp-light");
     document.body.appendChild(bd);
     // next frame → trigger fade-in
     requestAnimationFrame(() => bd.classList.add("is-visible"));
@@ -320,13 +438,13 @@ function createFAB() {
   fab.type = "button";
   fab.title = "TokenPilot — click to open, drag to move";
   fab.innerHTML = `<span class="tp-fab-icon">${svg("flash", 18)}</span>`;
-  if (currentTheme === "light") fab.classList.add("tp-light");
+  if (resolveTheme() === "light") fab.classList.add("tp-light");
   document.body.appendChild(fab);
   // Restore saved free-form drop position (overrides corner anchor).
   if (fabFreePos) applyFabFreePos(fab, fabFreePos);
   attachFabDrag(fab);
 
-  fab.addEventListener("click", e => {
+  fab.addEventListener("click", () => {
     if (fab.dataset.dragged === "1") { fab.dataset.dragged = "0"; return; }
     setCollapsed(false);
   });
@@ -372,7 +490,7 @@ function attachFabDrag(fab) {
     fab.style.bottom = "auto";
   };
 
-  const onUp = e => {
+  const onUp = () => {
     if (!dragging) return;
     dragging = false;
     fab.releasePointerCapture?.(pointerId);
@@ -401,7 +519,7 @@ function createUI() {
   createFAB();
   const box = document.createElement("div");
   box.id = "tp-box";
-  if (currentTheme === "light") box.classList.add("tp-light");
+  if (resolveTheme() === "light") box.classList.add("tp-light");
 
   box.innerHTML = `
     <div class="tp-header">
@@ -409,45 +527,15 @@ function createUI() {
         <div class="tp-logo">${svg("flash", 14)}</div>
         <div class="tp-brand-text">
           <div class="tp-brand-name">TokenPilot</div>
-          <div class="tp-brand-host"><span class="tp-live-dot"></span><span id="tp-host-label">${window.location.hostname}</span></div>
+          <div class="tp-brand-host"><span class="tp-live-dot"></span><span id="tp-host-label">${window.location.hostname}</span><span class="tp-brand-ver">· v${(chrome.runtime?.getManifest?.().version) || ""}</span></div>
         </div>
       </div>
       <div class="tp-header-actions">
-        <button class="tp-iconbtn" id="tp-theme-btn" title="Toggle theme">${svg(currentTheme === "dark" ? "sun" : "moon", 14)}</button>
+        <button class="tp-iconbtn" id="tp-theme-btn" title="Toggle theme">${svg(themePref === "auto" ? "auto" : themePref === "light" ? "sun" : "moon", 14)}</button>
         <button class="tp-iconbtn" id="tp-collapse-btn" title="Collapse">${svg("minus", 14)}</button>
       </div>
     </div>
 
-    <div class="tp-hero">
-      <div class="tp-hero-ring">
-        <svg width="76" height="76" viewBox="0 0 76 76" style="transform:rotate(-90deg)">
-          <defs>
-            <linearGradient id="tp-grad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#c084fc"/>
-            </linearGradient>
-            <linearGradient id="tp-grad-warn" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#f97316"/>
-            </linearGradient>
-            <linearGradient id="tp-grad-danger" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#f97316"/><stop offset="1" stop-color="#ef4444"/>
-            </linearGradient>
-          </defs>
-          <circle cx="38" cy="38" r="35.5" fill="none" stroke="currentColor" stroke-opacity="0.12" stroke-width="5"/>
-          <circle id="tp-ring-fill" cx="38" cy="38" r="35.5" fill="none" stroke="url(#tp-grad)" stroke-width="5" stroke-linecap="round" stroke-dasharray="223" stroke-dashoffset="223" style="transition:stroke-dashoffset 0.5s cubic-bezier(.4,0,.2,1)"/>
-        </svg>
-        <div class="tp-hero-inner">
-          <div class="tp-hero-num" id="tp-token-count">0</div>
-          <div class="tp-hero-sub" id="tp-limit-sub">/ 128k</div>
-        </div>
-      </div>
-      <div class="tp-hero-meta">
-        <span class="tp-model-chip"><span class="tp-model-dot"></span><span id="tp-model-name">Detecting…</span></span>
-        <div class="tp-hero-stats">
-          <div><div class="tp-hero-stat-val" id="tp-pct-val">0%</div><div class="tp-hero-stat-lbl">used</div></div>
-          <div><div class="tp-hero-stat-val" id="tp-free-val">128k</div><div class="tp-hero-stat-lbl">free</div></div>
-        </div>
-      </div>
-    </div>
 
     <div class="tp-tabs" id="tp-tabs">
       <div class="tp-tabs-indicator" id="tp-tabs-indicator"></div>
@@ -458,10 +546,35 @@ function createUI() {
 
     <div class="tp-tabbody">
       <div class="tp-pane tp-live" data-pane="tokens">
-        <div class="tp-live-label"><span>Prompt</span><span class="tp-chars" id="tp-chars">0 chars · 0 words</span></div>
-        <div id="tp-signals" class="tp-signals"></div>
-        <div class="tp-analysis-tip" id="tp-tip" style="display:none"></div>
-        <div class="tp-flash" id="tp-flash"></div>
+        <div class="tp-hero">
+          <div class="tp-hero-row">
+            <span class="tp-hero-num" id="tp-token-num">0</span>
+            <span class="tp-hero-unit">tokens</span>
+            <span class="tp-delta" id="tp-delta"></span>
+          </div>
+          <div class="tp-hero-sub" id="tp-hero-sub">
+            <span id="tp-words">0 words</span>
+            <span class="tp-hero-sep">·</span>
+            <span id="tp-chars">0 chars</span>
+          </div>
+        </div>
+
+        <div class="tp-section" id="tp-analysis-section" style="display:none">
+          <div class="tp-section-label">Prompt Analysis</div>
+          <div class="tp-dim-list" id="tp-dim-list"></div>
+        </div>
+
+        <div class="tp-section" id="tp-suggest-section" style="display:none">
+          <div class="tp-section-label">${svg("spark", 10)}<span>Suggestions</span></div>
+          <div class="tp-suggest-list" id="tp-suggest-list"></div>
+        </div>
+
+        <div class="tp-live-empty" id="tp-live-empty">Start typing to see live analysis</div>
+
+        <div class="tp-live-actions">
+          <button class="tp-action-btn" id="tp-copy-prompt">${svg("copy", 12)}<span>Copy</span></button>
+          <button class="tp-action-btn" id="tp-save-prompt">${svg("save", 12)}<span>Save</span></button>
+        </div>
       </div>
 
       <div class="tp-pane tp-history-pane" data-pane="history" style="display:none">
@@ -511,6 +624,7 @@ function createUI() {
   document.body.appendChild(box);
   bindUIEvents();
   applyCorner(currentCorner);
+  applyTheme();
   setCollapsed(isCollapsed);
   detectModel();
   setTab(currentTab, true);
@@ -523,13 +637,23 @@ function bindUIEvents() {
   const $ = id => document.getElementById(id);
 
   $("tp-theme-btn").addEventListener("click", () => {
-    currentTheme = currentTheme === "dark" ? "light" : "dark";
-    localStorage.setItem(THEME_KEY, currentTheme);
-    const box = document.getElementById("tp-box");
-    const fab = document.getElementById("tp-fab");
-    box.classList.toggle("tp-light", currentTheme === "light");
-    fab?.classList.toggle("tp-light", currentTheme === "light");
-    $("tp-theme-btn").innerHTML = svg(currentTheme === "dark" ? "sun" : "moon", 14);
+    themePref = themePref === "auto" ? "light" : themePref === "light" ? "dark" : "auto";
+    localStorage.setItem(THEME_KEY, themePref);
+    applyTheme();
+    toast("Theme: " + themePref);
+  });
+
+  $("tp-copy-prompt").addEventListener("click", () => {
+    const text = currentInput ? getInputText(currentInput) : "";
+    if (!text.trim()) { toast("Nothing to copy"); return; }
+    navigator.clipboard.writeText(text).then(() => toast("Copied")).catch(() => toast("Clipboard unavailable"));
+  });
+  $("tp-save-prompt").addEventListener("click", () => {
+    const text = currentInput ? getInputText(currentInput) : "";
+    if (!text.trim() || text.trim().length < 10) { toast("Nothing to save"); return; }
+    saveToHistory(text);
+    if (currentTab === "history") renderHistory();
+    toast("Saved");
   });
 
   $("tp-collapse-btn").addEventListener("click", () => setCollapsed(true));
@@ -575,76 +699,105 @@ function setTab(tab, instant = false) {
 // ── Refresh all dynamic bits ─────────────────────────────────
 function refreshAll() {
   updateTokenDisplay();
-  const modelEl = document.getElementById("tp-model-name");
-  if (modelEl) modelEl.textContent = detectedModel || "Detecting…";
 }
 
-// ── Live display ─────────────────────────────────────────────
+// ── Live display (hero count + delta + analysis dims + suggestions) ──
 function updateTokenDisplay() {
   try {
     const text = currentInput ? getInputText(currentInput) : "";
+    const trimmed = text.trim();
+    const wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
     const tokens = estimateTokens(text);
-    const pct = Math.min((tokens / detectedLimit) * 100, 100);
 
-    const countEl = document.getElementById("tp-token-count");
-    const subEl   = document.getElementById("tp-limit-sub");
-    const pctEl   = document.getElementById("tp-pct-val");
-    const freeEl  = document.getElementById("tp-free-val");
-    const charsEl = document.getElementById("tp-chars");
-    const ringEl  = document.getElementById("tp-ring-fill");
-    const box     = document.getElementById("tp-box");
+    const numEl    = document.getElementById("tp-token-num");
+    const wordsEl  = document.getElementById("tp-words");
+    const charsEl  = document.getElementById("tp-chars");
+    const deltaEl  = document.getElementById("tp-delta");
+    const emptyEl  = document.getElementById("tp-live-empty");
+    const anaSec   = document.getElementById("tp-analysis-section");
+    const dimList  = document.getElementById("tp-dim-list");
+    const sugSec   = document.getElementById("tp-suggest-section");
+    const sugList  = document.getElementById("tp-suggest-list");
 
-    if (countEl) countEl.textContent = tokens.toLocaleString();
-    if (subEl)   subEl.textContent   = "/ " + formatNumber(detectedLimit);
-    if (pctEl)   pctEl.textContent   = pct.toFixed(1) + "%";
-    if (freeEl)  freeEl.textContent  = formatNumber(Math.max(detectedLimit - tokens, 0));
-    const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-    if (charsEl) charsEl.textContent = `${text.length} chars · ${words} words`;
+    if (numEl)   numEl.textContent   = tokens.toLocaleString();
+    if (wordsEl) wordsEl.textContent = wordCount + (wordCount === 1 ? " word" : " words");
+    if (charsEl) charsEl.textContent = text.length.toLocaleString() + " chars";
 
-    if (ringEl) {
-      const C = 2 * Math.PI * 35.5;
-      ringEl.setAttribute("stroke-dashoffset", C * (1 - pct / 100));
-      const state = pct > 80 ? "danger" : pct > 50 ? "warning" : "ok";
-      const grad = state === "danger" ? "tp-grad-danger" : state === "warning" ? "tp-grad-warn" : "tp-grad";
-      ringEl.setAttribute("stroke", `url(#${grad})`);
-      if (box) box.setAttribute("data-state", state);
+    // Delta chip: diff vs. last idle baseline. Auto-resets after user pauses.
+    if (deltaEl) {
+      if (!deltaBaselineInit) {
+        lastTokenBaseline = tokens;
+        deltaBaselineInit = true;
+      }
+      const diff = tokens - lastTokenBaseline;
+      if (diff === 0 || !trimmed) {
+        deltaEl.classList.remove("is-visible", "is-up", "is-down");
+        deltaEl.innerHTML = "";
+      } else {
+        deltaEl.classList.add("is-visible");
+        deltaEl.classList.toggle("is-up",   diff > 0);
+        deltaEl.classList.toggle("is-down", diff < 0);
+        const glyph = diff > 0 ? svg("arrow_up", 9) : svg("arrow_dn", 9);
+        deltaEl.innerHTML = glyph + "<span>" + (diff > 0 ? "+" : "") + diff + "</span>";
+      }
+      clearTimeout(deltaResetTimer);
+      deltaResetTimer = setTimeout(() => {
+        lastTokenBaseline = tokens;
+        if (deltaEl) {
+          deltaEl.classList.remove("is-visible", "is-up", "is-down");
+          deltaEl.innerHTML = "";
+        }
+      }, 1600);
     }
 
-    // Signals
-    const signalsEl = document.getElementById("tp-signals");
-    const tipEl = document.getElementById("tp-tip");
-    if (signalsEl) signalsEl.innerHTML = "";
-    if (tipEl) tipEl.style.display = "none";
-    if (text.trim().length > 10) {
-      const a = analyzePrompt(text);
-      if (a && signalsEl) {
-        const strengthPill = document.createElement("span");
-        strengthPill.className = "tp-signal-pill";
-        strengthPill.textContent = a.strength;
-        strengthPill.style.color = a.strengthColor;
-        strengthPill.style.borderColor = a.strengthColor + "55";
-        signalsEl.appendChild(strengthPill);
-        if (a.readability) {
-          const r = document.createElement("span");
-          r.className = "tp-signal-pill";
-          r.textContent = a.readability.label;
-          r.style.color = a.readability.color;
-          r.style.borderColor = a.readability.color + "55";
-          signalsEl.appendChild(r);
-        }
-        a.signals.forEach(s => {
-          const p = document.createElement("span");
-          p.className = "tp-signal-pill";
-          p.textContent = s;
-          signalsEl.appendChild(p);
+    // Analysis + suggestions only when there's meaningful text.
+    const hasContent = trimmed.length >= 10;
+    if (emptyEl) emptyEl.style.display = hasContent ? "none" : "";
+
+    if (hasContent) {
+      const dims = analyzeDimensions(text);
+      if (dimList && anaSec) {
+        dimList.innerHTML = "";
+        const rows = [
+          ["Clarity",     dims.clarity],
+          ["Specificity", dims.specificity],
+          ["Structure",   dims.structure],
+        ];
+        rows.forEach(([name, d]) => {
+          const row = document.createElement("div");
+          row.className = "tp-dim-row";
+          let dots = "";
+          for (let i = 1; i <= 5; i++) {
+            dots += `<span class="tp-dot${i <= d.score ? " is-on" : ""}" style="${i <= d.score ? "background:" + d.label.color : ""}"></span>`;
+          }
+          row.innerHTML = `
+            <span class="tp-dim-name">${name}</span>
+            <span class="tp-dim-dots">${dots}</span>
+            <span class="tp-dim-label" style="color:${d.label.color}">${d.label.text}</span>`;
+          dimList.appendChild(row);
         });
-        if (a.readability?.tip && tipEl) {
-          tipEl.textContent = "Tip: " + a.readability.tip;
-          tipEl.style.display = "";
+        anaSec.style.display = "";
+      }
+
+      const tips = buildSuggestions(text, dims);
+      if (sugList && sugSec) {
+        sugList.innerHTML = "";
+        if (tips.length) {
+          tips.forEach(t => {
+            const row = document.createElement("div");
+            row.className = "tp-suggest-item";
+            row.innerHTML = `<span class="tp-suggest-arrow">→</span><span>${escapeHtml(t)}</span>`;
+            sugList.appendChild(row);
+          });
+          sugSec.style.display = "";
+        } else {
+          sugSec.style.display = "none";
         }
       }
+    } else {
+      if (anaSec) anaSec.style.display = "none";
+      if (sugSec) sugSec.style.display = "none";
     }
-
   } catch (e) { console.warn("[TokenPilot] updateTokenDisplay error:", e); }
 }
 
@@ -667,7 +820,7 @@ function renderHistory() {
     return;
   }
 
-  shown.forEach((h, i) => {
+  shown.forEach((h) => {
     const item = document.createElement("div");
     item.className = "tp-history-item";
     item.innerHTML = `
@@ -715,6 +868,29 @@ function tpFmtFilenameStamp(d) {
          "-" + pad(d.getHours()) + pad(d.getMinutes());
 }
 
+// Remove consecutive duplicate lines (and consecutive duplicate paragraphs).
+// Claude renders some tool-use blocks as summary + expanded twin nodes; innerText
+// collapses both into the same string, producing "X\nX" pairs.
+function dedupeConsecutiveLines(text) {
+  if (!text) return text;
+  const lines = text.split("\n");
+  const out = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed && out.length && out[out.length - 1].trim() === trimmed) continue;
+    out.push(line);
+  }
+  // Also drop consecutive duplicate blocks separated by blank lines (e.g. "A\n\nA").
+  const blocks = out.join("\n").split(/\n{2,}/);
+  const dedupedBlocks = [];
+  for (const b of blocks) {
+    const t = b.trim();
+    if (t && dedupedBlocks.length && dedupedBlocks[dedupedBlocks.length - 1].trim() === t) continue;
+    dedupedBlocks.push(b);
+  }
+  return dedupedBlocks.join("\n\n");
+}
+
 // ── Transfer payload builder (shared by download + send-to-AI) ──
 function buildTransferMarkdown(messages) {
   const host    = detectedPlatform || window.location.hostname;
@@ -749,7 +925,8 @@ function buildTransferMarkdown(messages) {
     if (m.text) {
       // Escape leading "---" lines to prevent MD horizontal-rule / YAML
       // collision inside the transcript.
-      body += m.text.replace(/^---(?=\s|$)/gm, "\\---") + "\n\n";
+      const cleaned = dedupeConsecutiveLines(m.text).replace(/^---(?=\s|$)/gm, "\\---");
+      body += cleaned + "\n\n";
     }
     if (m.images && m.images.length > 0) {
       m.images.forEach(desc => {
@@ -915,7 +1092,7 @@ function exportHistory(format) {
 }
 
 // ── Toast / flash ────────────────────────────────────────────
-function toast(msg, type = "success") {
+function toast(msg) {
   const el = document.getElementById("tp-toast");
   const textEl = document.getElementById("tp-toast-text");
   if (!el || !textEl) return;
@@ -923,14 +1100,6 @@ function toast(msg, type = "success") {
   el.classList.add("is-visible");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("is-visible"), 1800);
-}
-function flash(msg, type = "error") {
-  const el = document.getElementById("tp-flash");
-  if (!el) return;
-  el.textContent = msg;
-  el.className = `tp-flash tp-flash--${type} visible`;
-  clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => { el.className = "tp-flash"; }, type === "success" ? 2000 : 5000);
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1221,11 +1390,12 @@ async function scrapeClaudeScrolling() {
     }
   }
 
+  const seenKeys  = new Set();
+  const messages  = [];
+
   const scroller  = findScroller();
   const savedTop  = scroller.scrollTop;
   const step      = Math.max(scroller.clientHeight * 0.7, 400);
-  const seenKeys  = new Set();
-  const messages  = [];
 
   // ① Scroll to very top, let first batch render
   scroller.scrollTop = 0;
@@ -1244,9 +1414,34 @@ async function scrapeClaudeScrolling() {
   // ③ Restore user's scroll position
   scroller.scrollTop = savedTop;
 
-  return messages.filter((m, i, arr) =>
+  return dropWrapperMessages(messages.filter((m, i, arr) =>
     i === 0 || m.text !== arr[i - 1].text || m.images.length > 0
-  );
+  ));
+}
+
+// Drop wrapper messages: when a captured element's text fully contains the text
+// of two or more other captured messages, it's a parent container that wrapped
+// multiple messages. Keep the granular children, drop the wrapper.
+function dropWrapperMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return messages;
+  const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
+  const items = messages.map((m) => ({ msg: m, norm: norm(m.text) })).filter((x) => x.norm.length > 0);
+  const drop = new Set();
+  for (let i = 0; i < items.length; i++) {
+    let containedCount = 0;
+    for (let j = 0; j < items.length; j++) {
+      if (i === j) continue;
+      if (items[i].norm.length <= items[j].norm.length) continue;
+      // Require child to be substantial (>= 40 chars) and fully contained.
+      if (items[j].norm.length >= 40 && items[i].norm.includes(items[j].norm)) {
+        containedCount++;
+        if (containedCount >= 2) break;
+      }
+    }
+    if (containedCount >= 2) drop.add(i);
+  }
+  if (!drop.size) return messages;
+  return items.filter((_, i) => !drop.has(i)).map((x) => x.msg);
 }
 
 // ── Main conversation scraper (async for image support) ──────
@@ -1445,9 +1640,9 @@ async function scrapeConversationAsync() {
     messages.push({ role: item.role, text, images });
   }
 
-  // De-duplicate adjacent identical text
-  return messages.filter((m, i, arr) =>
-    i === 0 || m.text !== arr[i - 1].text || m.images.length > 0);
+  // De-duplicate adjacent identical text + drop wrapper-of-wrappers
+  return dropWrapperMessages(messages.filter((m, i, arr) =>
+    i === 0 || m.text !== arr[i - 1].text || m.images.length > 0));
 }
 
 // ── Message listener: SCRAPE_CONVERSATION (async) ────────────
@@ -1497,8 +1692,16 @@ function startObserver() {
   aihObserver.observe(document.body, { childList: true, subtree: true });
 }
 function init() {
-  chrome.storage.local.get(["isEnabled"], ({ isEnabled }) => {
-    if (isEnabled === false) return;
+  if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
+  try {
+    chrome.storage.local.get(["isEnabled"], ({ isEnabled }) => {
+      if (chrome.runtime.lastError) return;
+      if (isEnabled === false) return;
+      initInner();
+    });
+  } catch (_) { markOrphanedAndCleanup(); }
+}
+function initInner() {
     // Show the FAB + panel immediately — don't wait for a prompt input.
     // Input attachment (for token counting) happens separately below.
     if (!document.getElementById("tp-box")) createUI();
@@ -1520,12 +1723,56 @@ function init() {
         clearInterval(aihInterval); aihInterval = null;
       }
     }, 500);
-  });
 }
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
   if (area !== "local" || !changes.isEnabled) return;
   changes.isEnabled.newValue === false ? removeUI() : init();
 });
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
 else init();
+
+// ── SPA navigation watcher ───────────────────────────────────
+// ChatGPT/Claude/Gemini are SPAs: clicking a sidebar chat or "new chat" only
+// changes location.href via pushState/replaceState. The content script does NOT
+// re-execute. Without this watcher the FAB silently vanishes until full reload.
+(function watchSpaNav() {
+  let lastHref = location.href;
+
+  function onRouteChange() {
+    if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    setTimeout(() => {
+      try {
+        if (!document.getElementById("tp-box")) init();
+        else detectModel();
+      } catch (e) { console.warn("[TokenPilot] SPA re-init failed:", e); }
+    }, 350);
+  }
+
+  ["pushState", "replaceState"].forEach((m) => {
+    const orig = history[m];
+    if (orig && !orig.__tpPatched) {
+      const wrapped = function () {
+        const ret = orig.apply(this, arguments);
+        window.dispatchEvent(new Event("tp:locationchange"));
+        return ret;
+      };
+      wrapped.__tpPatched = true;
+      history[m] = wrapped;
+    }
+  });
+  window.addEventListener("popstate", onRouteChange);
+  window.addEventListener("tp:locationchange", onRouteChange);
+
+  // Heartbeat: rebuild UI if Claude/ChatGPT tore down our subtree.
+  setInterval(() => {
+    if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
+    if (tpOrphaned) return;
+    if (!document.getElementById("tp-box") && !document.getElementById("tp-fab")) {
+      try { init(); } catch (_) {}
+    }
+  }, 3000);
+})();

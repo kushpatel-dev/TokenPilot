@@ -3,7 +3,7 @@
   "name": "TokenPilot",
   "version": "3.5",
   "description": "Real-time token counter, prompt analysis & history for ChatGPT, Claude, Gemini and more.",
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "tabs", "scripting", "alarms"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
@@ -17,7 +17,8 @@
     "https://deepseek.com/*",
     "https://chat.deepseek.com/*",
     "https://github.com/*",
-    "https://arena.ai/*"
+    "https://arena.ai/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -48,7 +49,7 @@
         "https://github.com/*",
         "https://arena.ai/*"
       ],
-      "js": ["data/models.js", "utils/tokenCounter.js", "content/content.js"],
+      "js": ["data/models.js", "data/modelRegistry.js", "utils/tokenCounter.js", "content/content.js"],
       "css": ["content/styles.css"],
       "run_at": "document_idle"
     },

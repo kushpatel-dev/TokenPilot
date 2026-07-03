@@ -77,12 +77,3 @@ function analyzePrompt(text) {
     return null;
   }
 }
-
-/**
- * Compact number formatter: 1400 → "1K", 1500000 → "1.5M"
- */
-function formatNumber(n) {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000)     return (n / 1_000).toFixed(0) + "K";
-  return n.toString();
-}
