@@ -49,7 +49,7 @@
         "https://github.com/*",
         "https://arena.ai/*"
       ],
-      "js": ["data/models.js", "data/modelRegistry.js", "utils/tokenCounter.js", "content/content.js"],
+      "js": ["vendor/gpt-tokenizer-cl100k.js", "data/models.js", "data/modelRegistry.js", "utils/tokenCounter.js", "content/content.js"],
       "css": ["content/styles.css"],
       "run_at": "document_idle"
     },

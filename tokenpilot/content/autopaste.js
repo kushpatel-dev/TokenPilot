@@ -334,9 +334,11 @@
     }
 
     log("paste landed,", inputText.length, "chars");
+    if (!stored.autoSubmit) {
+      showToast("Conversation pasted (" + inputText.length + " chars). Review and click Send.", "ok");
+      return;
+    }
     showToast("conversation pasted (" + inputText.length + " chars). Submitting…", "ok");
-
-    if (!stored.autoSubmit) return;
 
     // Give the page a beat to register the input and enable the send button.
     await sleep(300);

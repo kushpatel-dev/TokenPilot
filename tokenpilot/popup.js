@@ -219,7 +219,7 @@
 
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      files:  ["data/models.js", "utils/tokenCounter.js", "content/content.js"]
+      files:  ["vendor/gpt-tokenizer-cl100k.js", "data/models.js", "utils/tokenCounter.js", "content/content.js"]
     }, () => {
       if (chrome.runtime.lastError) {
         finish({ ok: false, error: "Cannot access this page. Open an AI chat first." });

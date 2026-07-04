@@ -1021,7 +1021,7 @@ function sendChatToTarget() {
     const payload = {
       target:     targetKey,
       content:    content,
-      autoSubmit: true,
+      autoSubmit: false,
       createdAt:  Date.now()
     };
 

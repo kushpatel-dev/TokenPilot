@@ -1,22 +1,43 @@
 // ============================================================
-//  TokenPilot v3.2 — Token & Analysis Utilities
+//  TokenPilot v3.6 — Token & Analysis Utilities
 //  Pure functions — no DOM, no side effects.
 // ============================================================
 
+// Resolve tokenizer once. UMD attaches GPTTokenizer_cl100k_base to globalThis.
+const __TP_TOKENIZER = (typeof globalThis !== "undefined" && globalThis.GPTTokenizer_cl100k_base) || null;
+
+function __tp_heuristicTokens(text) {
+  const words = text.trim().split(/\s+/).length;
+  const specialChars = (text.match(/[^\w\s]/g) || []).length;
+  return Math.ceil((words + specialChars * 0.5) * 1.3);
+}
+
+// Small LRU-ish cache. Keystroke handlers fire input+keyup per keypress on the
+// same text, so repeated encode() calls are wasted work on long prompts.
+let __tp_lastText = null;
+let __tp_lastCount = 0;
+
 /**
- * Estimates token count from raw text.
- * Heuristic: word count + special chars, calibrated to ~cl100k_base.
+ * Real cl100k_base token count via gpt-tokenizer.
+ * Falls back to heuristic if the tokenizer failed to load.
  */
 function estimateTokens(text) {
   if (!text || !text.trim()) return 0;
+  if (text === __tp_lastText) return __tp_lastCount;
+  let count;
   try {
-    const words = text.trim().split(/\s+/).length;
-    const specialChars = (text.match(/[^\w\s]/g) || []).length;
-    return Math.ceil((words + specialChars * 0.5) * 1.3);
+    if (__TP_TOKENIZER && typeof __TP_TOKENIZER.encode === "function") {
+      count = __TP_TOKENIZER.encode(text).length;
+    } else {
+      count = __tp_heuristicTokens(text);
+    }
   } catch (e) {
     console.warn("[TokenPilot] estimateTokens error:", e);
-    return 0;
+    try { count = __tp_heuristicTokens(text); } catch (_) { count = 0; }
   }
+  __tp_lastText = text;
+  __tp_lastCount = count;
+  return count;
 }
 
 /**
