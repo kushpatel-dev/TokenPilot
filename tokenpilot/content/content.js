@@ -816,6 +816,15 @@ function renderHistory() {
   const q = searchQuery.toLowerCase();
   const shown = q ? all.filter(h => h.text.toLowerCase().includes(q)) : all;
   if (count) count.textContent = `${all.length} saved`;
+
+  const hasHistory = all.length > 0;
+  ["tp-export-csv", "tp-export-json", "tp-clear-all"].forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.style.display = hasHistory ? "" : "none";
+    btn.disabled = !hasHistory;
+  });
+
   list.innerHTML = "";
 
   if (!shown.length) {

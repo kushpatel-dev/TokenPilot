@@ -1,6 +1,6 @@
-# ⚡ TokenPilot — AI Prompt & Chat Transfer Tool
+# ⚡ TokenPilot — AI Prompt, Chat Transfer & Claude Code Bridge
 
-**TokenPilot** is a premium Chrome extension that supercharges your workflow across all major AI platforms — ChatGPT, Claude, Gemini, Perplexity, Mistral, DeepSeek, and more. It provides real-time token estimation, readability analysis, local prompt history, and a first-of-its-kind **Chat Transfer** feature that lets you move an entire conversation from one AI to another — without losing any context.
+**TokenPilot** is a premium Chrome extension + terminal bridge that supercharges your workflow across all major AI platforms — ChatGPT, Claude, Gemini, Perplexity, Mistral, DeepSeek, and more. It provides real-time token estimation, readability analysis, local prompt history, a first-of-its-kind **Chat Transfer** between web AIs, and — new in **v3.5** — a **Claude Code CLI relay** that lets you continue a terminal session inside any web AI with one slash command.
 
 ---
 
@@ -12,11 +12,27 @@
 - Displays **% used** and **tokens free** at a glance
 - Automatically detects which model you're on and adjusts the context limit
 
-### 🔁 Chat Transfer *(New in v3.4)*
-- Exports your **entire conversation** from any AI platform into a structured **Markdown (`.md`) file**
+### 🌉 Claude Code CLI Bridge *(New in v3.5)*
+Continue your **Claude Code CLI** session inside any web AI without copy-paste gymnastics.
+
+**One-time setup** (from the cloned repo root):
+
+```bash
+bash install.sh
+```
+
+This wires up both slash commands globally — no per-project setup needed. Then, in any Claude Code CLI session:
+
+- Type `/relay` → session copies to clipboard → switch to Claude.ai / ChatGPT / Gemini tab → TokenPilot popup offers **Import & paste**
+- Type `/relay-download` → session saves as a portable `.md` file in `~/Downloads` for archiving, sharing, or continuing on a different machine
+- Works from **any project directory**, not just the TokenPilot repo
+- Automatically finds your latest session, filters tool noise, adds a briefing paragraph so the receiving AI knows how to continue
+- Uninstall anytime: `bash install.sh --uninstall`
+
+### 🔁 Chat Transfer *(v3.4)*
+- Exports your **entire conversation** from any web AI into a structured **Markdown (`.md`) file**
 - The file includes a YAML frontmatter header, role-labeled message blocks, and a ready-made continuation prompt — so the receiving AI picks up exactly where you left off
 - **Token estimate shown before you download** — you'll know exactly how many tokens the file will consume when pasted into the new AI (`etm: 4.2K tokens`)
-- Token count is also written at the bottom of every exported file for reference
 - Tested accuracy:
   - Short chats (5–15 msgs): **~95%** context retention
   - Medium chats (15–30 msgs): **~80–85%** context retention
@@ -47,23 +63,55 @@
 
 ## 🌐 Supported Platforms
 
-| Platform | Transfer | Token Count | History |
-|---|---|---|---|
-| ChatGPT (chatgpt.com) | ✅ | ✅ | ✅ |
-| Claude (claude.ai) | ✅ | ✅ | ✅ |
-| Gemini (gemini.google.com) | ✅ | ✅ | ✅ |
-| AI Studio (aistudio.google.com) | ✅ | ✅ | ✅ |
-| Perplexity (perplexity.ai) | ✅ | ✅ | ✅ |
-| Mistral / Le Chat | ✅ | ✅ | ✅ |
-| DeepSeek (chat.deepseek.com) | ✅ | ✅ | ✅ |
-| GitHub Copilot | ✅ | ✅ | ✅ |
-| Arena.ai | ✅ | ✅ | ✅ |
+| Platform | Chat Transfer | Token Count | History | Claude Code Relay |
+|---|---|---|---|---|
+| ChatGPT (chatgpt.com) | ✅ | ✅ | ✅ | ✅ receive |
+| Claude (claude.ai) | ✅ | ✅ | ✅ | ✅ receive |
+| Gemini (gemini.google.com) | ✅ | ✅ | ✅ | ✅ receive |
+| AI Studio (aistudio.google.com) | ✅ | ✅ | ✅ | ✅ receive |
+| Perplexity (perplexity.ai) | ✅ | ✅ | ✅ | ✅ receive |
+| Mistral / Le Chat | ✅ | ✅ | ✅ | ✅ receive |
+| DeepSeek (chat.deepseek.com) | ✅ | ✅ | ✅ | ✅ receive |
+| GitHub Copilot | ✅ | ✅ | ✅ | — |
+| Arena.ai | ✅ | ✅ | ✅ | — |
+| **Claude Code CLI** | — | — | — | ✅ **source** |
 
 ---
 
-## 🔁 How Chat Transfer Works
+## 🌉 How the Claude Code CLI Bridge Works
 
-1. Have a conversation on any supported AI (e.g. Claude)
+### `/relay` — live handoff via clipboard
+
+1. Have a coding session in Claude Code CLI (any project directory)
+2. Type `/relay` at the prompt
+3. Terminal prints: `tp-relay: NNNN bytes on clipboard...`
+4. Switch to a Claude.ai / ChatGPT / Gemini / any supported AI tab
+5. TokenPilot popup appears:
+   > **TokenPilot · Import chat from clipboard?**
+   > [Dismiss]  [Import & paste]
+6. Click **Import & paste** → transcript lands in the prompt box
+7. Hit enter — the web AI continues where Claude Code left off
+
+### `/relay-download` — portable `.md` file
+
+1. Type `/relay-download` in Claude Code CLI
+2. Saves as `~/Downloads/tokenpilot-<project>-<timestamp>.md`
+3. Use it to:
+   - Archive sessions for later reference
+   - Share with a teammate over Slack/email
+   - Continue on a different machine (paste into a fresh Claude Code CLI)
+
+### Under the hood
+
+- `install.sh` copies two small scripts to `~/.tokenpilot/` and writes slash-command definitions to `~/.claude/commands/`
+- On `/relay`, the bridge reads the latest session JSONL from `~/.claude/projects/<encoded-cwd>/`, converts it to clean markdown, and pipes it to your system clipboard (via `pbcopy` / `wl-copy` / `xclip` / `clip.exe` — auto-detected per OS)
+- The extension listens for a `TOKENPILOT-RELAY:v1` header on the clipboard and only prompts to import when it detects one — random clipboard content is never touched
+
+---
+
+## 🔁 How Chat Transfer Works (web AI → web AI)
+
+1. Have a conversation on any supported web AI (e.g. Claude)
 2. Click the **TokenPilot** extension icon
 3. Click **"Transfer Chat to Another AI"**
 4. A `.md` file downloads automatically — the popup shows the token cost (e.g. `✓ 23 msgs · etm: 4.2K tokens`)
@@ -104,42 +152,89 @@ messages: 23
 
 ## 🛠️ Installation
 
-Since TokenPilot is a developer build, install it manually:
+### Prerequisites
 
-1. **Download**: Clone or download this repository to your computer
-2. **Open Extensions**: In Chrome, Edge, or Brave go to `chrome://extensions`
-3. **Developer Mode**: Enable the toggle in the top-right corner
-4. **Load Unpacked**: Click **"Load unpacked"** and select the TokenPilot folder
-5. **Done**: Open any supported AI site — the ⚡ widget appears in the bottom-right corner
+- **Google Chrome** (or Edge, Brave, Arc — any Chromium browser)
+- **Node.js** (only for the Claude Code CLI bridge) — check with `node -v`. Install via `brew install node` (macOS), `sudo apt install nodejs` (Linux), or from https://nodejs.org
+- **Claude Code CLI** (optional, for `/relay` features) — https://claude.com/claude-code
+
+### Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/kushpatel-dev/TokenPilot.git
+cd TokenPilot
+```
+
+### Step 2 — Install the terminal bridge (optional but recommended)
+
+```bash
+bash install.sh
+```
+
+This wires up `/relay` and `/relay-download` globally in Claude Code CLI. Detailed guide: [`INSTALL.md`](./INSTALL.md).
+
+Uninstall anytime with `bash install.sh --uninstall`.
+
+### Step 3 — Load the Chrome extension
+
+1. Open `chrome://extensions`
+2. Toggle **Developer mode** ON (top-right)
+3. Click **Load unpacked**
+4. Select the `tokenpilot/` folder inside the cloned repo
+5. Pin the extension icon from the puzzle-piece menu
+
+Open any supported AI site — the ⚡ widget appears in the bottom-right corner.
+
+### One-liner (for sharing)
+
+```bash
+git clone https://github.com/kushpatel-dev/TokenPilot.git && cd TokenPilot && bash install.sh
+```
+
+Then load `tokenpilot/` via `chrome://extensions` → **Load unpacked**.
 
 ---
 
 ## 📁 File Structure
 
 ```
-tokenpilot/
-├── manifest.json          # Extension config (v3.4)
-├── popup.html             # Extension popup UI
-├── popup.js               # Popup logic + Chat Transfer
-├── background.js          # Service worker — stats & messaging
-├── data/
-│   └── models.js          # Model database (30+ models, context limits)
-├── utils/
-│   └── tokenCounter.js    # Token estimation + prompt analysis
-└── content/
-    ├── content.js         # Main content script + conversation scraper
-    └── styles.css         # Widget styles
+TokenPilot/
+├── install.sh                     # One-shot installer for terminal bridge
+├── INSTALL.md                     # Detailed install guide
+├── scripts/
+│   ├── tp-relay.sh                # Bash wrapper: converts + clipboards/saves session
+│   └── claude-code-to-md.mjs      # Node converter: JSONL → clean markdown
+├── .claude/commands/
+│   ├── relay.md                   # /relay slash command (clipboard mode)
+│   └── relay-download.md          # /relay-download slash command (.md file mode)
+└── tokenpilot/                    # Chrome extension (Load unpacked target)
+    ├── manifest.json              # Extension config (v3.5)
+    ├── popup.html                 # Extension popup UI
+    ├── popup.js                   # Popup logic + Chat Transfer
+    ├── background.js              # Service worker — stats & messaging
+    ├── data/
+    │   ├── models.js              # Model database (30+ models, context limits)
+    │   └── modelRegistry.js       # Model registry helpers
+    ├── utils/
+    │   └── tokenCounter.js        # Token estimation + prompt analysis
+    └── content/
+        ├── content.js             # Main content script + conversation scraper
+        ├── autopaste.js           # Auto-paste helper for receiving AIs
+        ├── relayImporter.js       # Clipboard listener for /relay payloads
+        └── styles.css             # Widget styles
 ```
 
 ---
 
 ## 🔒 Privacy & Security
 
-- **No external API calls** — nothing leaves your browser
+- **No external API calls** — nothing leaves your browser or machine
 - **Local storage only** — prompt history stored with `localStorage`
 - **No account required** — works out of the box
 - **No ads** — ever
-- The Chat Transfer file is generated entirely on your device and downloaded locally
+- Chat Transfer and relay files are generated entirely on your device
+- The terminal bridge only reads session files under `~/.claude/projects/` (data Claude Code itself already writes locally)
+- Clipboard listener activates only when it sees a `TOKENPILOT-RELAY:v1` header — random clipboard content is ignored
 
 ---
 
@@ -149,10 +244,18 @@ tokenpilot/
 - **CSS3** — glassmorphic dark UI with animations
 - **Chrome Manifest V3** — latest extension standards
 - **cl100k_base heuristic** — token estimation calibrated to GPT-4 / Claude tokenizer
+- **Bash + Node.js** — terminal bridge (no npm deps, pure stdlib)
 
 ---
 
 ## 📋 Changelog
+
+### v3.5 *(current)*
+- 🌉 **Claude Code CLI Bridge** — new `/relay` and `/relay-download` slash commands
+- 📦 One-shot `install.sh` sets up terminal bridge globally in under 5 seconds
+- 🔎 Clipboard-header detection (`TOKENPILOT-RELAY:v1`) so import popup only fires on relayed payloads
+- 🧹 Cleans tool_use / tool_result noise from Claude Code sessions before handoff
+- 🐛 Path-encoder fix — sessions now resolve correctly for project paths containing spaces or dots
 
 ### v3.4
 - ✨ Added **Chat Transfer** — export any conversation as a `.md` file and continue on another AI
