@@ -3,7 +3,7 @@
   "name": "TokenPilot",
   "version": "3.5",
   "description": "Real-time token counter, prompt analysis & history for ChatGPT, Claude, Gemini and more.",
-  "permissions": ["storage", "tabs", "scripting", "alarms"],
+  "permissions": ["storage", "tabs", "scripting", "alarms", "clipboardRead"],
   "host_permissions": [
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
@@ -67,7 +67,7 @@
         "https://deepseek.com/*",
         "https://chat.deepseek.com/*"
       ],
-      "js": ["content/autopaste.js"],
+      "js": ["content/autopaste.js", "content/relayImporter.js"],
       "run_at": "document_idle"
     }
   ]

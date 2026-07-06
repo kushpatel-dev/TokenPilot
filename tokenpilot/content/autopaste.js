@@ -355,6 +355,23 @@
     }
   }
 
+  // Reverse-map current host → target key (for relayImporter and other callers).
+  function targetKeyForHost() {
+    const host = currentHost();
+    for (const key of Object.keys(TARGETS)) {
+      if (TARGETS[key].hosts.some(h => host === h || host.endsWith("." + h))) return key;
+    }
+    return null;
+  }
+
+  // Public handle so other content scripts (e.g. relayImporter) can trigger
+  // a paste after staging a payload in chrome.storage.local[STORAGE_KEY].
+  window.__tokenPilotAutoPaste = {
+    run,
+    targetKeyForHost,
+    STORAGE_KEY
+  };
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", run, { once: true });
   } else {

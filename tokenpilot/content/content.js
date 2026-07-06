@@ -21,6 +21,7 @@ function markOrphanedAndCleanup() {
   try { clearInterval(aihInterval); } catch (_) {}
   try { document.getElementById("tp-box")?.remove(); } catch (_) {}
   try { document.getElementById("tp-fab")?.remove(); } catch (_) {}
+  try { __tpInputAbortCtrl?.abort(); __tpInputAbortCtrl = null; } catch (_) {}
 }
 
 // ── Constants ────────────────────────────────────────────────
@@ -74,6 +75,11 @@ let searchQuery      = "";
 let aihObserver      = null;
 let aihInterval      = null;
 let toastTimer       = null;
+// Input listener registry. WeakSet gives JS-native dedup that survives DOM
+// re-renders without stale dataset flags. AbortController lets us tear down
+// every bound handler at once when the UI is removed or the script orphans.
+const __tpAttachedInputs = new WeakSet();
+let __tpInputAbortCtrl = null;
 let lastTokenBaseline = 0;
 let deltaBaselineInit = false;
 let deltaResetTimer  = null;
@@ -1105,11 +1111,29 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-// ── Input listener (unchanged logic) ─────────────────────────
+// ── Input listener (with AbortController-based teardown) ─────
+function detachInputListeners() {
+  try { __tpInputAbortCtrl?.abort(); } catch (_) {}
+  __tpInputAbortCtrl = null;
+  // WeakSet has no clear(); entries drop as elements GC. Reset dataset flags
+  // on any survivors so a fresh attach cycle can rebind them.
+  try {
+    document.querySelectorAll("[data-tp-attached]")
+      .forEach(el => { try { delete el.dataset.tpAttached; } catch (_) {} });
+  } catch (_) {}
+}
+
 function attachInputListener(el) {
-  if (!el || el.dataset.tpAttached) return;
+  if (!el) return;
+  if (__tpAttachedInputs.has(el)) return;
+  if (el.dataset.tpAttached) return;
+  __tpAttachedInputs.add(el);
   el.dataset.tpAttached = "true";
   currentInput = el;
+
+  if (!__tpInputAbortCtrl) __tpInputAbortCtrl = new AbortController();
+  const signal = __tpInputAbortCtrl.signal;
+
   const onInput = () => {
     const text = getInputText(el);
     if (!text.trim() && lastKnownPrompt.trim().length > 10) {
@@ -1121,8 +1145,8 @@ function attachInputListener(el) {
     }
     updateTokenDisplay();
   };
-  el.addEventListener("input", onInput);
-  el.addEventListener("keyup", onInput);
+  el.addEventListener("input", onInput, { signal, passive: true });
+  el.addEventListener("keyup", onInput, { signal, passive: true });
   el.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) {
       const text = getInputText(el);
@@ -1132,8 +1156,8 @@ function attachInputListener(el) {
         lastKnownPrompt = "";
       }
     }
-  });
-  el.addEventListener("focus", () => { currentInput = el; updateTokenDisplay(); });
+  }, { signal });
+  el.addEventListener("focus", () => { currentInput = el; updateTokenDisplay(); }, { signal, passive: true });
   updateTokenDisplay();
 }
 
@@ -1669,7 +1693,7 @@ function removeUI() {
   document.getElementById("tp-fab")?.remove();
   aihObserver?.disconnect(); aihObserver = null;
   clearInterval(aihInterval); aihInterval = null;
-  document.querySelectorAll("[data-tp-attached]").forEach(el => delete el.dataset.tpAttached);
+  detachInputListeners();
 }
 function startObserver() {
   aihObserver?.disconnect();
@@ -1744,10 +1768,14 @@ else init();
     if (!isExtAlive()) { markOrphanedAndCleanup(); return; }
     if (location.href === lastHref) return;
     lastHref = location.href;
+    // Composer element usually gets replaced across SPA nav. Drop stale
+    // listeners now; the observer/init cycle will attach fresh ones.
+    detachInputListeners();
+    currentInput = null;
     setTimeout(() => {
       try {
         if (!document.getElementById("tp-box")) init();
-        else detectModel();
+        else { detectModel(); initInner(); }
       } catch (e) { console.warn("[TokenPilot] SPA re-init failed:", e); }
     }, 350);
   }

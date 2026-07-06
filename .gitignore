@@ -1,0 +1,17 @@
+# Build artifacts
+*.zip
+
+# Serena LSP tool state (per-developer)
+.serena/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor state
+.vscode/
+.idea/
+
+# Node
+node_modules/
+npm-debug.log
