@@ -8,6 +8,7 @@
 #   ./tp-relay.sh path/to/session.md
 #   cat session.md | ./tp-relay.sh
 #   ./tp-relay.sh --claude-code   # auto-detect latest Claude Code session
+#   ./tp-relay.sh --claude-code --project /path/to/repo   # session for other cwd
 #
 # Exit codes: 0 success · 1 bad args · 2 clipboard failure · 3 source missing.
 
@@ -28,6 +29,8 @@ Usage:
   tp-relay --claude-code --download # save transcript as .md file (no clipboard)
   tp-relay --claude-code --download DIR
                                     # save into DIR (default ~/Downloads)
+  tp-relay --claude-code --project /path/to/repo
+                                    # locate session for other project dir
 EOF
   exit 1
 }
@@ -53,11 +56,19 @@ copy_to_clipboard() {
 # Convert the latest Claude Code CLI session for the current cwd to markdown.
 # Delegates to claude-code-to-md.mjs (Node, no deps).
 run_claude_code_converter() {
-  local script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  local converter="$script_dir/claude-code-to-md.mjs"
+  local script_dir converter
+  # Follow symlink so a shim like /usr/local/bin/tp-relay resolves to real dir.
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do src="$(readlink "$src")"; done
+  script_dir="$(cd -- "$(dirname -- "$src")" && pwd)"
+  converter="$script_dir/claude-code-to-md.mjs"
   [ -f "$converter" ] || { echo "tp-relay: converter not found at $converter" >&2; return 3; }
   command -v node >/dev/null 2>&1 || { echo "tp-relay: node not installed" >&2; return 3; }
-  node "$converter"
+  if [ -n "${PROJECT_DIR:-}" ]; then
+    node "$converter" --project "$PROJECT_DIR"
+  else
+    node "$converter"
+  fi
 }
 
 INPUT=""
@@ -65,12 +76,14 @@ SOURCE="$SOURCE_LABEL"
 CLAUDE_CODE_MODE=0
 DOWNLOAD_MODE=0
 DOWNLOAD_DIR=""
+PROJECT_DIR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage ;;
     --source) SOURCE="$2"; shift 2 ;;
     --claude-code) CLAUDE_CODE_MODE=1; SOURCE="claude-code-cli"; shift ;;
+    --project) PROJECT_DIR="$2"; shift 2 ;;
     --download)
       DOWNLOAD_MODE=1
       # Optional next arg is a directory (must not start with '-')
@@ -113,13 +126,15 @@ HEADER
 if [ "$DOWNLOAD_MODE" = "1" ]; then
   OUT_DIR="${DOWNLOAD_DIR:-$HOME/Downloads}"
   mkdir -p "$OUT_DIR" || { echo "tp-relay: cannot create $OUT_DIR" >&2; exit 2; }
-  PROJECT_SLUG="$(basename "$PWD" | tr ' /' '--')"
+  PROJECT_SLUG="$(basename "${PROJECT_DIR:-$PWD}" | tr ' /' '--')"
   STAMP="$(date +%Y%m%d-%H%M%S)"
   OUT_FILE="$OUT_DIR/tokenpilot-${PROJECT_SLUG}-${STAMP}.md"
   printf %s "$PAYLOAD" > "$OUT_FILE" || { echo "tp-relay: write failed" >&2; exit 2; }
   echo "tp-relay: saved ${BYTES} bytes -> ${OUT_FILE}"
   echo "tp-relay: paste this file's content into another Claude Code CLI (or any AI) to continue."
-elif copy_to_clipboard "$PAYLOAD"; then
+fi
+
+if copy_to_clipboard "$PAYLOAD"; then
   echo "tp-relay: ${BYTES} bytes on clipboard (source=${SOURCE}). Open Claude/ChatGPT — TokenPilot will prompt to import."
 else
   exit 2
