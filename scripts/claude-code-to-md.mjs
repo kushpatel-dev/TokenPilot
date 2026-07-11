@@ -65,14 +65,41 @@ function projectDirFor(projectPath) {
   return abs.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
-function findLatestSession(projectPath) {
-  const dir = join(CLAUDE_ROOT, projectDirFor(projectPath));
+function latestInDir(dir) {
   if (!existsSync(dir)) return null;
   const files = readdirSync(dir)
     .filter(n => n.endsWith(".jsonl"))
     .map(n => ({ n, mtime: statSync(join(dir, n)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);
-  return files.length ? join(dir, files[0].n) : null;
+  return files.length ? { path: join(dir, files[0].n), mtime: files[0].mtime } : null;
+}
+
+// Try exact cwd first, then walk up parent dirs. Handles git worktrees where
+// Claude Code stored the session under the original repo root, not the
+// worktree subdir. Also falls back to any project dir whose decoded path is a
+// prefix of cwd (picks the most-recent session across matches).
+function findLatestSession(projectPath) {
+  const abs = resolve(projectPath);
+  let cur = abs;
+  while (true) {
+    const hit = latestInDir(join(CLAUDE_ROOT, projectDirFor(cur)));
+    if (hit) return hit.path;
+    const parent = resolve(cur, "..");
+    if (parent === cur) break;
+    cur = parent;
+  }
+  if (!existsSync(CLAUDE_ROOT)) return null;
+  const candidates = [];
+  for (const name of readdirSync(CLAUDE_ROOT)) {
+    if (name.startsWith(".")) continue;
+    const decoded = "/" + name.replace(/^-/, "").replace(/-/g, "/");
+    if (abs === decoded || abs.startsWith(decoded + "/")) {
+      const hit = latestInDir(join(CLAUDE_ROOT, name));
+      if (hit) candidates.push(hit);
+    }
+  }
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates.length ? candidates[0].path : null;
 }
 
 function listAll() {

@@ -101,6 +101,24 @@ This wires up both slash commands globally — no per-project setup needed. Then
    - Share with a teammate over Slack/email
    - Continue on a different machine (paste into a fresh Claude Code CLI)
 
+### Rescue mode — context 100% full
+
+When Claude Code hits its context limit, the CLI stops accepting input — slash commands like `/relay` and even pasted `bash` won't run. Because the installer also puts a `tp-relay` shim on your `PATH`, you can escape without losing the session:
+
+1. Open a **new terminal window** (leave the frozen one alone).
+2. `cd` into the same project directory, then:
+   ```
+   tp-relay --claude-code --download
+   ```
+   The transcript saves to `~/Downloads/tokenpilot-<project>-<timestamp>.md`.
+3. Prefer running from anywhere? Point at the project explicitly:
+   ```
+   tp-relay --claude-code --download --project /path/to/repo
+   ```
+4. Paste the resulting `.md` into a fresh Claude Code CLI, claude.ai, or ChatGPT to continue.
+
+If `tp-relay: command not found`, `~/.local/bin` isn't on your `PATH` yet. Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (or `~/.bashrc`) and re-open the terminal — or invoke the full path: `~/.tokenpilot/tp-relay.sh --claude-code --download`.
+
 ### Under the hood
 
 - `install.sh` copies two small scripts to `~/.tokenpilot/` and writes slash-command definitions to `~/.claude/commands/`

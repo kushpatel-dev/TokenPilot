@@ -12,6 +12,8 @@ INSTALL_DIR="$HOME/.tokenpilot"
 CMD_DIR="$HOME/.claude/commands"
 CMD_FILE="$CMD_DIR/relay.md"
 CMD_DOWNLOAD_FILE="$CMD_DIR/relay-download.md"
+BIN_DIR="$HOME/.local/bin"
+BIN_LINK="$BIN_DIR/tp-relay"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 log()  { printf "\033[1;36m[tokenpilot]\033[0m %s\n" "$*"; }
@@ -19,9 +21,13 @@ warn() { printf "\033[1;33m[tokenpilot]\033[0m %s\n" "$*" >&2; }
 err()  { printf "\033[1;31m[tokenpilot]\033[0m %s\n" "$*" >&2; exit 1; }
 
 if [ "${1:-}" = "--uninstall" ]; then
-  log "Removing $INSTALL_DIR, $CMD_FILE, $CMD_DOWNLOAD_FILE"
+  log "Removing $INSTALL_DIR, $CMD_FILE, $CMD_DOWNLOAD_FILE, $BIN_LINK"
   rm -rf "$INSTALL_DIR"
   rm -f  "$CMD_FILE" "$CMD_DOWNLOAD_FILE"
+  # Remove PATH symlink only if it points at our install.
+  if [ -L "$BIN_LINK" ] && [ "$(readlink "$BIN_LINK")" = "$INSTALL_DIR/tp-relay.sh" ]; then
+    rm -f "$BIN_LINK"
+  fi
   log "Uninstalled."
   exit 0
 fi
@@ -54,6 +60,21 @@ SRC_CONV="$SCRIPT_DIR/scripts/claude-code-to-md.mjs"
 cp "$SRC_RELAY" "$INSTALL_DIR/tp-relay.sh"
 cp "$SRC_CONV"  "$INSTALL_DIR/claude-code-to-md.mjs"
 chmod +x "$INSTALL_DIR/tp-relay.sh"
+
+# 2b. Expose `tp-relay` on PATH so it works from any project directory —
+# critical when Claude Code context is 100% full and the /relay slash command
+# is unresponsive. User opens a fresh terminal and runs `tp-relay --claude-code`.
+log "Linking tp-relay -> $BIN_LINK"
+mkdir -p "$BIN_DIR"
+ln -sfn "$INSTALL_DIR/tp-relay.sh" "$BIN_LINK"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) PATH_OK=1 ;;
+  *) PATH_OK=0 ;;
+esac
+if [ "$PATH_OK" = "0" ]; then
+  warn "$BIN_DIR is not on your PATH. Add this to ~/.zshrc or ~/.bashrc:"
+  warn "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+fi
 
 # 3. Write /relay and /relay-download slash commands for Claude Code CLI
 log "Writing slash commands to $CMD_DIR"
@@ -99,6 +120,12 @@ Next steps:
        /relay          -> clipboard, triggers extension popup on next AI tab focus
        /relay-download -> saves ~/Downloads/tokenpilot-<project>-<ts>.md for share/archive
   3. Switch to claude.ai / ChatGPT — TokenPilot popup will offer to import (for /relay).
+
+Context 100% full? (Slash commands & pasted bash freeze inside Claude Code.)
+  Open a NEW terminal, cd into the same project, then run:
+       tp-relay --claude-code --download
+  Or from anywhere:
+       tp-relay --claude-code --download --project /path/to/repo
 
 Uninstall anytime:  bash install.sh --uninstall
 DONE

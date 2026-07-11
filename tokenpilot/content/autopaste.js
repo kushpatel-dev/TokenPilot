@@ -127,39 +127,82 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   // ── Toast ─────────────────────────────────────────────────────
+  const TOAST_STYLE_ID = "__tokenpilot_toast_styles";
+  function injectToastStyles() {
+    if (document.getElementById(TOAST_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = TOAST_STYLE_ID;
+    style.textContent = `
+@keyframes __tp_toast_in { from { opacity:0; transform:translateY(14px) scale(0.97);} to { opacity:1; transform:translateY(0) scale(1);} }
+@keyframes __tp_toast_out { to { opacity:0; transform:translateY(8px) scale(0.98);} }
+#__tokenpilot_toast {
+  position:fixed; z-index:2147483647; right:20px; bottom:20px;
+  min-width:280px; max-width:400px;
+  padding:12px 14px 12px 12px;
+  display:flex; align-items:flex-start; gap:10px;
+  font:500 13px/1.5 'Geist','Inter',system-ui,-apple-system,sans-serif;
+  color:#f4f4f5;
+  background:linear-gradient(160deg,#15151f 0%,#1c1c2b 55%,#242438 100%);
+  border:1px solid rgba(167,139,250,0.35);
+  border-radius:12px;
+  box-shadow:0 16px 44px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.03) inset;
+  animation:__tp_toast_in 240ms cubic-bezier(0.16,1,0.3,1) both;
+  backdrop-filter:blur(10px);
+}
+#__tokenpilot_toast.closing { animation:__tp_toast_out 220ms ease-in forwards; }
+#__tokenpilot_toast .tp-ic {
+  width:28px; height:28px; border-radius:8px; flex:none;
+  display:flex; align-items:center; justify-content:center;
+  font:800 14px/1 'Geist',sans-serif; color:#fff;
+  background:linear-gradient(135deg,#8b5cf6,#c084fc);
+  box-shadow:0 3px 10px rgba(139,92,246,0.4);
+}
+#__tokenpilot_toast.ok  .tp-ic { background:linear-gradient(135deg,#10b981,#34d399); box-shadow:0 3px 10px rgba(16,185,129,0.4); }
+#__tokenpilot_toast.err .tp-ic { background:linear-gradient(135deg,#ef4444,#f97171); box-shadow:0 3px 10px rgba(239,68,68,0.4); }
+#__tokenpilot_toast .tp-txt { flex:1; min-width:0; }
+#__tokenpilot_toast .tp-brand { font-size:10.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#c084fc; margin-bottom:2px; }
+#__tokenpilot_toast.ok  .tp-brand { color:#34d399; }
+#__tokenpilot_toast.err .tp-brand { color:#f97171; }
+#__tokenpilot_toast .tp-msg { color:#e4e4e7; white-space:pre-wrap; word-break:break-word; }
+#__tokenpilot_toast .tp-x {
+  width:22px; height:22px; margin-left:4px; border:none; background:transparent;
+  color:#71717a; font-size:14px; cursor:pointer; border-radius:5px;
+  display:flex; align-items:center; justify-content:center;
+  transition:background 120ms,color 120ms;
+}
+#__tokenpilot_toast .tp-x:hover { background:rgba(255,255,255,0.06); color:#f4f4f5; }
+`;
+    document.documentElement.appendChild(style);
+  }
+
   function showToast(msg, kind) {
     try {
+      injectToastStyles();
       const id = "__tokenpilot_toast";
-      let host = document.getElementById(id);
-      if (!host) {
-        host = document.createElement("div");
-        host.id = id;
-        host.style.cssText = [
-          "position:fixed", "z-index:2147483647",
-          "right:20px", "bottom:20px",
-          "padding:10px 14px",
-          "font:600 13px/1.4 'Geist',system-ui,-apple-system,sans-serif",
-          "color:#fff",
-          "background:linear-gradient(135deg,#8b5cf6,#c084fc)",
-          "border:1px solid rgba(167,139,250,0.6)",
-          "border-radius:10px",
-          "box-shadow:0 8px 24px rgba(0,0,0,0.35)",
-          "max-width:380px",
-          "pointer-events:none",
-          "white-space:pre-wrap"
-        ].join(";");
-        document.documentElement.appendChild(host);
-      }
-      host.textContent = "TokenPilot: " + msg;
-      if (kind === "err") {
-        host.style.background = "linear-gradient(135deg,#ef4444,#f97171)";
-        host.style.borderColor = "rgba(239,68,68,0.6)";
-      } else if (kind === "ok") {
-        host.style.background = "linear-gradient(135deg,#10b981,#34d399)";
-        host.style.borderColor = "rgba(16,185,129,0.6)";
-      }
-      clearTimeout(host.__t);
-      host.__t = setTimeout(() => { host.remove(); }, 6000);
+      document.getElementById(id)?.remove();
+
+      const host = document.createElement("div");
+      host.id = id;
+      host.className = kind === "err" ? "err" : kind === "ok" ? "ok" : "";
+      const glyph = kind === "err" ? "!" : kind === "ok" ? "✓" : "TP";
+      host.innerHTML = `
+        <div class="tp-ic">${glyph}</div>
+        <div class="tp-txt">
+          <div class="tp-brand">TokenPilot</div>
+          <div class="tp-msg"></div>
+        </div>
+        <button class="tp-x" aria-label="Dismiss" title="Dismiss">×</button>
+      `;
+      host.querySelector(".tp-msg").textContent = msg;
+
+      const close = () => {
+        host.classList.add("closing");
+        setTimeout(() => host.remove(), 220);
+      };
+      host.querySelector(".tp-x").addEventListener("click", close);
+
+      document.documentElement.appendChild(host);
+      host.__t = setTimeout(close, 6000);
     } catch (_) { /* no-op */ }
   }
 
@@ -194,12 +237,16 @@
       // ProseMirror/Lexical editors. Indirect call avoids TS deprecation noise.
       const exec = /** @type {any} */ (document)["exec" + "Command"];
       const ok = exec.call(document, "insertText", false, text);
-      if (!ok) return false;
-      return (el.innerText || el.textContent || "").length > 0;
-    } catch (e) { warn("execCommand failed", e); return false; }
+      if (!ok) return 0;
+      return (el.innerText || el.textContent || "").length > 0 ? 1 : 0;
+    } catch (e) { warn("execCommand failed", e); return 0; }
   }
 
-  function pasteWithClipboardEvent(el, text) {
+  // Paste helpers return one of:
+  //   0 — failed, try next strategy
+  //   1 — direct insert into the element (outer code should verify content)
+  //   2 — host consumed the event (skip verification, e.g. ChatGPT attachment)
+  async function pasteWithClipboardEvent(el, text) {
     try {
       el.focus();
       const dt = new DataTransfer();
@@ -207,9 +254,22 @@
       const evt = new ClipboardEvent("paste", {
         bubbles: true, cancelable: true, clipboardData: dt
       });
-      el.dispatchEvent(evt);
-      return (el.innerText || el.textContent || "").length > 0;
-    } catch (e) { warn("ClipboardEvent failed", e); return false; }
+      // dispatchEvent returns false if any listener called preventDefault.
+      // ChatGPT does this to convert the paste into a "Pasted text"
+      // attachment chip. Treat as host-consumed — do not fall through to
+      // execCommand (which would duplicate the content inline).
+      const consumed = el.dispatchEvent(evt) === false || evt.defaultPrevented;
+      if (consumed) return 2;
+      // Rich editors like Claude.ai's ProseMirror handle paste asynchronously.
+      // Poll briefly for content instead of failing immediately.
+      const deadline = Date.now() + 800;
+      while (Date.now() < deadline) {
+        const len = (el.innerText || el.textContent || "").length;
+        if (len > 0) return 1;
+        await sleep(60);
+      }
+      return 0;
+    } catch (e) { warn("ClipboardEvent failed", e); return 0; }
   }
 
   function pasteWithDirectAssign(el, text) {
@@ -219,20 +279,39 @@
       el.dispatchEvent(new InputEvent("input", {
         bubbles: true, inputType: "insertText", data: text
       }));
-      return (el.innerText || el.textContent || "").length > 0;
-    } catch (e) { warn("direct assign failed", e); return false; }
+      return (el.innerText || el.textContent || "").length > 0 ? 1 : 0;
+    } catch (e) { warn("direct assign failed", e); return 0; }
   }
 
-  function pasteIntoContentEditable(el, text) {
-    if (pasteWithExecCommand(el, text))      { log("paste via execCommand");      return true; }
-    if (pasteWithClipboardEvent(el, text))   { log("paste via ClipboardEvent");   return true; }
-    if (pasteWithDirectAssign(el, text))     { log("paste via direct assign");    return true; }
-    return false;
+  // Rich editors (ProseMirror/Lexical) reflow on every insertText call. For
+  // large payloads that path locks the main thread for seconds — Chrome then
+  // shows the "Page unresponsive" dialog. Prefer native ClipboardEvent first
+  // once we cross a threshold; browsers optimize native paste as a single op.
+  const LARGE_PASTE_THRESHOLD = 10 * 1024;   // 10 KB → try ClipboardEvent first
+  const HUGE_PASTE_THRESHOLD  = 20 * 1024;   // 20 KB → skip auto-paste, ask user to Cmd+V
+
+  async function pasteIntoContentEditable(el, text) {
+    const strategies = text.length >= LARGE_PASTE_THRESHOLD
+      ? [
+          [pasteWithClipboardEvent, "ClipboardEvent"],
+          [pasteWithExecCommand,    "execCommand"],
+          [pasteWithDirectAssign,   "direct assign"]
+        ]
+      : [
+          [pasteWithExecCommand,    "execCommand"],
+          [pasteWithClipboardEvent, "ClipboardEvent"],
+          [pasteWithDirectAssign,   "direct assign"]
+        ];
+    for (const [fn, label] of strategies) {
+      const r = await fn(el, text);
+      if (r) { log("paste via " + label + (r === 2 ? " (host consumed)" : "")); return r; }
+    }
+    return 0;
   }
 
-  function pasteInto(el, text) {
+  async function pasteInto(el, text) {
     if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-      return pasteIntoTextarea(el, text);
+      return pasteIntoTextarea(el, text) ? 1 : 0;
     }
     return pasteIntoContentEditable(el, text);
   }
@@ -307,23 +386,43 @@
 
     log("composer found:", input.tagName, input.className || input.id || "");
 
+    // For very large payloads, do NOT auto-paste — rich editors freeze the
+    // page and Chrome shows the "unresponsive" dialog. Content is already on
+    // the clipboard; tell the user to press Cmd/Ctrl+V.
+    const isEditor = !(input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement);
+    if (isEditor && stored.content.length > HUGE_PASTE_THRESHOLD) {
+      log("payload > threshold, skipping auto-paste to avoid main-thread stall");
+      showToast(
+        "Large transcript (" + Math.round(stored.content.length / 1024) + " KB) is on your clipboard. Click the composer and press Cmd/Ctrl+V.",
+        "ok"
+      );
+      clearPayload();
+      return;
+    }
+
     // Scroll into view + click to ensure focus.
     try { input.scrollIntoView({ block: "center" }); } catch (_) {}
     try { input.click(); } catch (_) {}
     input.focus();
     await sleep(120);
 
-    const pasted = pasteInto(input, stored.content);
+    const pasted = await pasteInto(input, stored.content);
 
-    // Verify content actually landed.
+    // Verify content actually landed — but only when we inserted directly.
+    // When the host consumed the paste (ChatGPT attachment chip), the
+    // composer's own text stays empty by design; trust the host.
     await sleep(200);
     const inputText = (input.value != null ? input.value : (input.innerText || input.textContent || ""));
-    const landed    = inputText && inputText.length >= Math.min(stored.content.length, 50);
+    const hostConsumed = pasted === 2;
+    const landed = hostConsumed || (inputText && inputText.length >= Math.min(stored.content.length, 50));
 
     clearPayload();
 
     if (!pasted || !landed) {
-      warn("paste did not land. fallback to clipboard.");
+      // Not a bug — some sites block synthetic paste. Clipboard fallback is
+      // the designed path. Keep this at log level so it doesn't clutter the
+      // extension error panel.
+      log("paste did not land — using clipboard fallback");
       showToast(
         clipboardOk
           ? "auto-paste blocked by this site. Content copied — click the composer and press Cmd/Ctrl+V."
@@ -333,12 +432,15 @@
       return;
     }
 
-    log("paste landed,", inputText.length, "chars");
+    const sizeLabel = hostConsumed
+      ? Math.round(stored.content.length / 1024) + " KB attachment"
+      : inputText.length + " chars";
+    log("paste landed,", sizeLabel);
     if (!stored.autoSubmit) {
-      showToast("Conversation pasted (" + inputText.length + " chars). Review and click Send.", "ok");
+      showToast("Conversation pasted (" + sizeLabel + "). Review and click Send.", "ok");
       return;
     }
-    showToast("conversation pasted (" + inputText.length + " chars). Submitting…", "ok");
+    showToast("Conversation pasted (" + sizeLabel + "). Submitting…", "ok");
 
     // Give the page a beat to register the input and enable the send button.
     await sleep(300);
