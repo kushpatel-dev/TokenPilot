@@ -24,9 +24,9 @@ bash install.sh
 This wires up both slash commands globally — no per-project setup needed. Then, in any Claude Code CLI session:
 
 - Type `/relay` → session copies to clipboard → switch to Claude.ai / ChatGPT / Gemini tab → TokenPilot popup offers **Import & paste**
-- Type `/relay-download` → session saves as a portable `.md` file in `~/Downloads` for archiving, sharing, or continuing on a different machine
+- Type `/relay-download` → session saves as a portable `.md` file in `~/Downloads` **and** copies to clipboard, so you get the popup import flow in one shot
 - Works from **any project directory**, not just the TokenPilot repo
-- Automatically finds your latest session, filters tool noise, adds a briefing paragraph so the receiving AI knows how to continue
+- Automatically finds your latest session, filters slash-command noise + tool-call output, so the receiving AI sees only substantive turns
 - Uninstall anytime: `bash install.sh --uninstall`
 
 ### 🔁 Chat Transfer *(v3.4)*
@@ -92,11 +92,12 @@ This wires up both slash commands globally — no per-project setup needed. Then
 6. Click **Import & paste** → transcript lands in the prompt box
 7. Hit enter — the web AI continues where Claude Code left off
 
-### `/relay-download` — portable `.md` file
+### `/relay-download` — portable `.md` file (+ popup)
 
 1. Type `/relay-download` in Claude Code CLI
-2. Saves as `~/Downloads/tokenpilot-<project>-<timestamp>.md`
-3. Use it to:
+2. Saves as `~/Downloads/tokenpilot-<project>-<timestamp>.md` **and** copies the same payload to your clipboard
+3. Switch to a supported AI tab — the TokenPilot **Import & paste** popup fires exactly like `/relay`
+4. Use the saved `.md` to:
    - Archive sessions for later reference
    - Share with a teammate over Slack/email
    - Continue on a different machine (paste into a fresh Claude Code CLI)
@@ -121,8 +122,9 @@ If `tp-relay: command not found`, `~/.local/bin` isn't on your `PATH` yet. Add `
 
 ### Under the hood
 
-- `install.sh` copies two small scripts to `~/.tokenpilot/` and writes slash-command definitions to `~/.claude/commands/`
+- `install.sh` copies two small scripts to `~/.tokenpilot/`, writes slash-command definitions to `~/.claude/commands/`, and symlinks `tp-relay` into `~/.local/bin/` so it works from any fresh terminal
 - On `/relay`, the bridge reads the latest session JSONL from `~/.claude/projects/<encoded-cwd>/`, converts it to clean markdown, and pipes it to your system clipboard (via `pbcopy` / `wl-copy` / `xclip` / `clip.exe` — auto-detected per OS)
+- Transcript converter filters slash-command markers (`<command-message>`, `<command-name>`), `tp-relay:` / `claude-code-to-md:` stdout echoes, and short "bytes on clipboard" acks — so the receiving AI only sees substantive turns
 - The extension listens for a `TOKENPILOT-RELAY:v1` header on the clipboard and only prompts to import when it detects one — random clipboard content is never touched
 
 ---
@@ -274,6 +276,9 @@ TokenPilot/
 - 🔎 Clipboard-header detection (`TOKENPILOT-RELAY:v1`) so import popup only fires on relayed payloads
 - 🧹 Cleans tool_use / tool_result noise from Claude Code sessions before handoff
 - 🐛 Path-encoder fix — sessions now resolve correctly for project paths containing spaces or dots
+- 🚑 **Rescue mode** — `tp-relay` symlinked to `~/.local/bin/` so you can recover a session from a fresh terminal when Claude Code context is 100% full and slash commands freeze
+- ⚡ `/relay-download` now also copies to clipboard — single command triggers both the `~/Downloads/*.md` file **and** the browser import popup
+- 🔇 Transcript filter drops slash-command markers, `tp-relay:` echoes, and short relay acks so the receiving AI sees only real conversation turns
 
 ### v3.4
 - ✨ Added **Chat Transfer** — export any conversation as a `.md` file and continue on another AI
